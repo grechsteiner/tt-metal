@@ -3,17 +3,17 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run every vector of the ttnn.add support matrix on ttsim with a 12x10 grid, until each has a result.
+"""Run support-matrix vectors on ttsim with a 12x10 grid, until each has a result.
 
-One pytest process per (shape_kind, layout) chunk. Results are appended to <out>/results.jsonl as
-each test finishes. If a process dies, or produces no result for --stall seconds (a hang that
-pytest-timeout cannot interrupt because C++ holds the GIL), the test that was running is recorded
-as "crashed" and the chunk resumes after it. Re-running the script skips everything already
-recorded, so it is safe to restart.
+First write the vector ids once with --write-ids (this imports ttnn to read the group registry),
+then start any number of drivers with --ids-file and --shard/--num-shards. Each driver runs one
+pytest process per (group, layout) chunk and appends results to its own results.jsonl as each test
+finishes. If a process dies, or produces no result for --stall seconds (a hang that pytest-timeout
+cannot interrupt because C++ holds the GIL), the test that was running is recorded as "crashed" and
+the chunk resumes after it. Re-running skips everything already recorded, so it is safe to restart.
 """
 
 import argparse
-import itertools
 import json
 import os
 import resource
@@ -24,29 +24,29 @@ import time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(TOOLS, "..", "..", ".."))
-TEST = "tests/ttnn/nightly/unit_tests/operations/eltwise/test_add_support_matrix.py::test_add_support_matrix"
-
-# Values copied from parameters["moonvit_add"] so the driver itself does not need to import ttnn.
-SHAPES = ["full"]
-LAYOUTS = ["tile", "row_major"]
-CONFIGS = [
-    "dram_interleaved",
-    "l1_interleaved",
-    "l1_height_sharded",
-    "l1_width_sharded",
-    "l1_block_sharded",
-    "l1_nd_sharded",
-    "dram_width_sharded",
-    "dram_nd_sharded",
-]
-OUTS = ["default"] + CONFIGS
+TEST = "tests/ttnn/nightly/unit_tests/operations/test_op_support_matrix.py::test_support_matrix"
 
 
-def node_id(shape, layout, a, b, out):
-    return (
-        f"{TEST}[shape_kind={shape}-layout={layout}-input_a_memory_config={a}"
-        f"-input_b_memory_config={b}-out_memory_config={out}]"
-    )
+def write_ids(path, group_names):
+    """Write one pytest node id per vector of the named groups (all groups if none are named)."""
+    sys.path.insert(0, REPO)
+    from tests.sweep_framework.support_matrix.groups import GROUPS
+
+    # The linear groups take minutes per vector on the simulator, so start them first.
+    names = group_names or sorted(GROUPS, key=lambda name: not name.startswith("linear_"))
+    unknown = sorted(set(names) - set(GROUPS))
+    if unknown:
+        sys.exit(f"unknown groups {unknown}; known: {sorted(GROUPS)}")
+    with open(path, "w") as f:
+        for name in names:
+            for vector in GROUPS[name].vectors():
+                f.write(f"{TEST}[{GROUPS[name].vector_id(vector)}]\n")
+
+
+def chunk_of(node_id):
+    """(group, layout) of a node id such as ...[add-tile-a=...-b=...-out=...]."""
+    group, layout = node_id.split("[", 1)[1].split("-")[:2]
+    return group, layout
 
 
 def load_done(path):
@@ -75,16 +75,30 @@ def no_cpu_limit():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out")
+    parser.add_argument("--write-ids", help="write the vector ids of --groups to this file and exit")
+    parser.add_argument("--groups", default="", help="comma-separated group names for --write-ids (default all)")
+    parser.add_argument("--ids-file", help="vector ids to run, from --write-ids")
     parser.add_argument("--simulator", default=os.environ.get("TT_METAL_SIMULATOR"), help="path to libttsim.so")
-    parser.add_argument("--runtime-root", required=True, help="tt-metal root whose core descriptor gives 12x10")
+    parser.add_argument("--runtime-root", help="tt-metal root whose core descriptor gives 12x10")
     parser.add_argument("--timeout", type=int, default=900, help="per-test timeout in seconds")
-    parser.add_argument("--stall", type=int, default=60, help="kill pytest if no result lands for this many seconds")
+    parser.add_argument("--stall", type=int, default=120, help="kill pytest if no result lands for this many seconds")
+    parser.add_argument(
+        "--slow-stall",
+        type=int,
+        default=2400,
+        help="--stall for groups named linear_*, whose vectors take minutes each on the simulator",
+    )
     parser.add_argument(
         "--shard", type=int, default=0, help="this driver runs vectors with index %% num-shards == shard"
     )
     parser.add_argument("--num-shards", type=int, default=1)
     args = parser.parse_args()
+    if args.write_ids:
+        write_ids(args.write_ids, [name for name in args.groups.split(",") if name])
+        return
+    if not (args.out and args.ids_file and args.runtime_root):
+        parser.error("--out, --ids-file and --runtime-root are required to run vectors")
     if not args.simulator:
         parser.error("pass --simulator or set TT_METAL_SIMULATOR")
 
@@ -98,16 +112,22 @@ def main():
         TT_METAL_DISABLE_SFPLOADMACRO="1",
         TT_METAL_RUNTIME_ROOT=args.runtime_root,
         RESULTS_JSONL=jsonl,
+        # Baselines (an op's DRAM-interleaved output) are computed once per run and shared by every driver.
+        SUPPORT_MATRIX_CACHE=os.path.join(args.out, "cache"),
         # Many drivers share the machine; torch would otherwise start a thread per core in each one.
         OMP_NUM_THREADS="4",
         MKL_NUM_THREADS="4",
         PYTHONPATH=TOOLS + os.pathsep + os.environ.get("PYTHONPATH", ""),
     )
 
-    for shape, layout in itertools.product(SHAPES, LAYOUTS):
-        chunk = f"{shape}_{layout}{tag}"
-        ids = [node_id(shape, layout, a, b, o) for a, b, o in itertools.product(CONFIGS, CONFIGS, OUTS)]
-        ids = ids[args.shard :: args.num_shards]
+    with open(args.ids_file) as f:
+        all_ids = [line.strip() for line in f if line.strip()]
+    chunks = {}
+    for node_id in all_ids[args.shard :: args.num_shards]:
+        chunks.setdefault(chunk_of(node_id), []).append(node_id)
+    for (group, layout), ids in chunks.items():
+        chunk = f"{group}_{layout}{tag}"
+        stall = args.slow_stall if group.startswith("linear_") else args.stall
         attempt = 0
         while True:
             done = load_all_done(args.out)
@@ -149,7 +169,7 @@ def main():
                     count = len(load_done(jsonl))
                     if count != last_count:
                         last_count, last_progress = count, time.time()
-                    elif time.time() - last_progress > args.stall:
+                    elif time.time() - last_progress > stall:
                         stalled = True
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
@@ -167,7 +187,7 @@ def main():
                 # pytest runs the ids in the order given, so the first unrecorded one was running when it died.
                 with open(log_path) as log:
                     tail = log.read()[-3000:]
-                message = f"hang: no result for {args.stall}s, killed" if stalled else f"crash: rc={rc}"
+                message = f"hang: no result for {stall}s, killed" if stalled else f"crash: rc={rc}"
                 with open(jsonl, "a") as f:
                     f.write(
                         json.dumps(

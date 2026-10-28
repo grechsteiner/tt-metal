@@ -20,6 +20,7 @@ def pytest_runtest_logreport(report):
             "nodeid": report.nodeid,
             "outcome": report.outcome,
             "message": dict(report.user_properties).get("message", ""),
+            "info": json.loads(dict(report.user_properties).get("info", "null")),
             "longrepr": error,
             "duration": round(report.duration, 2),
         }
