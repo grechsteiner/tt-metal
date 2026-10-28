@@ -4,18 +4,23 @@
 
 """CPU: the TT module tree loads the reference state dict by name, with the device upload stubbed.
 
-Catches renamed or missing parameters and wrong pre-load transforms without a device.
+Catches renamed or missing parameters and wrong pre-load transforms without a device. Also checks
+that per-image inputs are written into the same device tensors on every call (`DeviceInput`).
 """
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
 import torch
 
-from models.experimental.kimi_k3_moonvit_v2.tests.common import SHALLOW_REFERENCE
+import ttnn
+from models.experimental.kimi_k3_moonvit_v2.reference import functional
+from models.experimental.kimi_k3_moonvit_v2.tests.common import SHALLOW_REFERENCE, random_patches
 from models.experimental.kimi_k3_moonvit_v2.tt import module, vision_model
+from models.experimental.kimi_k3_moonvit_v2.tt.device_input import DeviceInput
 from models.experimental.kimi_k3_moonvit_v2.tt.module import LoadingError, Module, Parameter, rename_substate
 
 
@@ -31,6 +36,27 @@ def host_parameters(monkeypatch):
     monkeypatch.setattr(Parameter, "load_torch_tensor", load_torch_tensor)
     monkeypatch.setattr(vision_model, "compute_kernel_config", lambda mesh_device: None)
     return SimpleNamespace(shape=(1, 1))
+
+
+@pytest.fixture
+def host_inputs(monkeypatch):
+    """`ttnn.from_torch` keeps the torch tensor and `copy_host_to_device_tensor` copies in place.
+    Returns the calls, "allocate" for a device upload and "copy" for an in-place write."""
+    calls = []
+
+    def from_torch(value, *, device=None, **kwargs):
+        if device is not None:
+            calls.append("allocate")
+        return value.clone()
+
+    def copy_host_to_device_tensor(host, device_tensor):
+        calls.append("copy")
+        device_tensor.copy_(host)
+
+    monkeypatch.setattr(ttnn, "from_torch", from_torch)
+    monkeypatch.setattr(ttnn, "copy_host_to_device_tensor", copy_host_to_device_tensor)
+    monkeypatch.setattr(ttnn, "ReplicateTensorToMesh", lambda mesh_device: None)
+    return calls
 
 
 @SHALLOW_REFERENCE
@@ -87,3 +113,37 @@ def test_load_cached(tmp_path, monkeypatch):
     module.load_cached(cached, tmp_path, source)
     assert len(calls) == 1
     assert cached.is_loaded() and torch.equal(cached.weight.data, torch.tensor([1.0, 2.0]))
+
+
+def test_device_input_writes_in_place(host_inputs):
+    x = DeviceInput((1, 1, 4, 2), mesh_device=object(), sp_axis=None)
+    first = x.write(torch.zeros(4, 2))
+    second = x.write(torch.ones(4, 2))
+    assert second is first
+    assert torch.equal(second, torch.ones(1, 1, 4, 2))
+    assert host_inputs == ["allocate", "copy"]
+
+
+@SHALLOW_REFERENCE
+def test_prepare_inputs_reuses_device_tensors(host_parameters, host_inputs, config, shallow_reference):
+    """A second image of another size lands in the first image's device tensors."""
+    config = dataclasses.replace(config, max_patches=1024)
+    tt = vision_model.TT_MoonViT_Vision_Model(config, mesh_device=host_parameters)
+    tt.load_torch_state_dict(shallow_reference.state_dict())
+
+    first = tt.prepare_inputs(*random_patches(config, [(1, 8, 8)]))
+    pixels, grid_thws = random_patches(config, [(1, 6, 20)], seed=1)
+    second = tt.prepare_inputs(pixels, grid_thws)
+    assert all(second[key] is first[key] for key in ("patches", "pos_emb", "logical_n"))
+    assert all(b is a for a, b in zip(first["rope"], second["rope"]))
+
+    pos_emb_weight = shallow_reference.vision_tower.patch_embed.pos_emb.weight
+    expected = functional.prepare_host_inputs(config, pos_emb_weight, pixels, grid_thws)
+    for key, actual in (
+        ("patches", second["patches"]),
+        ("pos_emb", second["pos_emb"]),
+        ("cos", second["rope"].cos),
+        ("sin", second["rope"].sin),
+    ):
+        torch.testing.assert_close(actual[0, 0], expected[key], msg=key)
+    assert second["logical_n"].item() == 6 * 20

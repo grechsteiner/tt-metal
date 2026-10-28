@@ -2,7 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device: `TT_Rope` tables, and `rotary_embedding_llama` with them against the reference `apply_rope`."""
+"""Device: `TT_Rope` tables, and `rotary_embedding_llama` with them against the reference `apply_rope`.
+
+The tables are written in place, so each test first fills them for another image."""
 
 from __future__ import annotations
 
@@ -15,7 +17,6 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     assert_pcc,
     DEVICE_GRIDS,
     device_config,
-    NOT_WRITTEN,
     P150_AND_RING,
     REFERENCE,
     reference_rope,
@@ -34,11 +35,13 @@ def build(mesh_device, sp_axis, num_links, config) -> TT_Rope:
 
 @P150_AND_RING
 @DEVICE_GRIDS
-@NOT_WRITTEN
 def test_rope_tables(mesh_device, sp_axis, num_links, config, grid):
     config = device_config(config, sp_axis)
     h, w = check_grid(torch.tensor(grid), config)
-    rope = build(mesh_device, sp_axis, num_links, config).get_rot_mats(h, w)
+    tt_rope = build(mesh_device, sp_axis, num_links, config)
+    previous = tt_rope.get_rot_mats(8, 8)
+    rope = tt_rope.get_rot_mats(h, w)
+    assert all(a is b for a, b in zip(rope, previous))
     cos, sin = functional.rope_cos_sin(config, h, w)
     cos, sin = (functional.to_window_order(t, h, w, config.merge_kernel_size) for t in (cos, sin))
     assert_pcc(cos, sp_gather(rope.cos, mesh_device, sp_axis, h * w), pcc=0.9999)
@@ -48,7 +51,6 @@ def test_rope_tables(mesh_device, sp_axis, num_links, config, grid):
 @P150_AND_RING
 @REFERENCE
 @DEVICE_GRIDS
-@NOT_WRITTEN
 def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, grid):
     config = device_config(config, sp_axis)
     grid_thws = torch.tensor(grid)
@@ -57,7 +59,9 @@ def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, grid):
     _, _, rope_freqs_cis = reference_rope(reference, grid_thws)
     golden, _ = apply_rope(q, q, rope_freqs_cis)
 
-    rope = build(mesh_device, sp_axis, num_links, config).get_rot_mats(h, w)
+    tt_rope = build(mesh_device, sp_axis, num_links, config)
+    tt_rope.get_rot_mats(8, 8)
+    rope = tt_rope.get_rot_mats(h, w)
     q_window = functional.to_window_order(q, h, w, config.merge_kernel_size)
     q_tt = sp_shard(q_window.transpose(0, 1), mesh_device, sp_axis, config.max_patches)  # [1, heads, S/sp, head_dim]
     out = ttnn.experimental.rotary_embedding_llama(q_tt, rope.cos, rope.sin, rope.trans_mat, is_decode_mode=False)
