@@ -22,9 +22,9 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import GRIDS, random_pa
 
 
 @pytest.fixture(scope="module")
-def tower(config):
+def tower(shallow_config):
     torch.manual_seed(0)
-    vt_config = VisionTowerConfig(load_vision_config(num_hidden_layers=config.num_hidden_layers))
+    vt_config = VisionTowerConfig(load_vision_config(num_hidden_layers=shallow_config.num_hidden_layers))
     return MoonViT3dPretrainedModel(vt_config).eval()
 
 
@@ -94,6 +94,7 @@ def test_prepare_host_inputs(config, tower):
 
     # Every per-row input shares the window order.
     cos, sin = host_prep.rope_cos_sin(config, h, w)
+    torch.testing.assert_close((inputs["cos"], inputs["sin"]), host_prep.rope_tables(config, h, w))
     raster = {
         "patches": host_prep.patches_to_rows(pixels),
         "pos_emb": host_prep.pos_embeds(tower.patch_embed.pos_emb.weight, h, w, config.pos_emb_interpolation_mode),

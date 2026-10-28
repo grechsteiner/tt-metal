@@ -52,7 +52,7 @@ def test_vision_attention(mesh_device, sp_axis, num_links, config, reference, gr
     with torch.no_grad():
         golden = block.attention_qkvpacked(x, cu_seqlens, max_seqlen, rope_freqs_cis)
 
-    rope = TT_Rope(config, mesh_device=mesh_device, parallel=parallel).get_rot_mats(h, w)
+    rope = TT_Rope(config, mesh_device=mesh_device, parallel=parallel).write(*host_prep.rope_tables(config, h, w))
     x_window = host_prep.to_window_order(x, h, w, config.merge_kernel_size)
     logical_n = logical_length_tensor(mesh_device, h * w)
     out = tt(sp_shard(x_window, mesh_device, sp_axis, config.max_patches), rope, logical_n)

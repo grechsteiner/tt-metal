@@ -60,8 +60,8 @@ def host_inputs(monkeypatch):
 
 
 @SHALLOW_REFERENCE
-def test_vision_model_loads_reference(host_parameters, config, shallow_reference):
-    tt = vision_model.TT_MoonViT_Vision_Model(config, mesh_device=host_parameters)
+def test_vision_model_loads_reference(host_parameters, shallow_config, shallow_reference):
+    tt = vision_model.TT_MoonViT_Vision_Model(shallow_config, mesh_device=host_parameters)
     state = shallow_reference.state_dict()
     tt.load_torch_state_dict(state)
     assert tt.is_loaded()
@@ -72,7 +72,7 @@ def test_vision_model_loads_reference(host_parameters, config, shallow_reference
     torch.testing.assert_close(block.norm0.weight.data, state["vision_tower.encoder.blocks.0.norm0.weight"][None])
     torch.testing.assert_close(
         tower.patch_embed.proj.weight.data,
-        state["vision_tower.patch_embed.proj.weight"].reshape(config.hidden_size, -1).T,
+        state["vision_tower.patch_embed.proj.weight"].reshape(shallow_config.hidden_size, -1).T,
     )
     assert torch.equal(tower.patch_embed.pos_emb_weight, state["vision_tower.patch_embed.pos_emb.weight"])
     torch.testing.assert_close(tt.mm_projector.fc0.weight.data, state["mm_projector.proj.0.weight"].T)
@@ -81,11 +81,11 @@ def test_vision_model_loads_reference(host_parameters, config, shallow_reference
 
 
 @SHALLOW_REFERENCE
-def test_rejects_missing_and_unexpected_keys(host_parameters, config, shallow_reference, expect_error):
+def test_rejects_missing_and_unexpected_keys(host_parameters, shallow_config, shallow_reference, expect_error):
     state = shallow_reference.state_dict()
     state.pop("vision_tower.encoder.final_layernorm.weight")
     state["vision_tower.encoder.extra.weight"] = torch.zeros(1)
-    tt = vision_model.TT_MoonViT_Vision_Model(config, mesh_device=host_parameters)
+    tt = vision_model.TT_MoonViT_Vision_Model(shallow_config, mesh_device=host_parameters)
     with expect_error(LoadingError, "final_layernorm"):
         tt.load_torch_state_dict(state)
 
@@ -125,9 +125,9 @@ def test_device_input_writes_in_place(host_inputs):
 
 
 @SHALLOW_REFERENCE
-def test_prepare_inputs_reuses_device_tensors(host_parameters, host_inputs, config, shallow_reference):
+def test_prepare_inputs_reuses_device_tensors(host_parameters, host_inputs, shallow_config, shallow_reference):
     """A second image of another size lands in the first image's device tensors."""
-    config = dataclasses.replace(config, max_patches=1024)
+    config = dataclasses.replace(shallow_config, max_patches=1024)
     tt = vision_model.TT_MoonViT_Vision_Model(config, mesh_device=host_parameters)
     tt.load_torch_state_dict(shallow_reference.state_dict())
 

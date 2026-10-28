@@ -35,23 +35,13 @@ class RopeTensors(NamedTuple):
 
 class TT_Rope:
     def __init__(self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, parallel: VisionParallel) -> None:
-        self.config = config
         table_shape = (1, 1, config.max_patches, config.head_dim)
         self.cos = DeviceInput(table_shape, mesh_device=mesh_device, sp_axis=parallel.sp_axis)
         self.sin = DeviceInput(table_shape, mesh_device=mesh_device, sp_axis=parallel.sp_axis)
         self.trans_mat = DeviceInput((1, 1, 32, 32), mesh_device=mesh_device, sp_axis=None)
 
     def write(self, cos: torch.Tensor, sin: torch.Tensor) -> RopeTensors:
-        """Fill the tables from (max_patches, head_dim) host cos/sin, already in window order and padded."""
+        """Fill the tables from `host_prep.rope_tables` (or `prepare_host_inputs`) cos/sin."""
         if self.trans_mat.tensor is None:
             self.trans_mat.write(host_prep.rot_transformation_mat())
         return RopeTensors(self.cos.write(cos), self.sin.write(sin), self.trans_mat.tensor)
-
-    def get_rot_mats(self, h: int, w: int) -> RopeTensors:
-        """`rope_cos_sin(config, h, w)` in window order, padded to `max_patches` rows, written to the tables."""
-        cos, sin = host_prep.rope_cos_sin(self.config, h, w)
-        kernel = self.config.merge_kernel_size
-        cos, sin = (
-            host_prep.pad_rows(host_prep.to_window_order(t, h, w, kernel), self.config.max_patches) for t in (cos, sin)
-        )
-        return self.write(cos, sin)

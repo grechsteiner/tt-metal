@@ -18,6 +18,7 @@ imports the reference or `transformers`.
     each row alone, so the order changes nothing else as long as patches, position embeddings and RoPE
     tables share it.
   * `pad_rows`: padding to the fixed device sequence length.
+  * `rope_tables`: `rope_cos_sin` in window order and padded, as the device tables hold it.
 
 `prepare_host_inputs` combines them for one image.
 """
@@ -102,6 +103,14 @@ def pad_rows(x: torch.Tensor, rows: int) -> torch.Tensor:
     return torch.nn.functional.pad(x, (0, 0) * (x.ndim - 1) + (0, rows - x.shape[0]))
 
 
+def rope_tables(config: MoonViTConfig, h: int, w: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """(max_patches, head_dim) cos and sin for the device: `rope_cos_sin` in window order, zero-padded."""
+    return tuple(
+        pad_rows(to_window_order(t, h, w, config.merge_kernel_size), config.max_patches)
+        for t in rope_cos_sin(config, h, w)
+    )
+
+
 def prepare_host_inputs(
     config: MoonViTConfig, pos_emb_weight: torch.Tensor, pixel_values: torch.Tensor, grid_thws: torch.Tensor
 ) -> dict:
@@ -111,7 +120,7 @@ def prepare_host_inputs(
     `logical_n`, the number of real rows.
     """
     h, w = check_grid(grid_thws, config)
-    cos, sin = rope_cos_sin(config, h, w)
+    cos, sin = rope_tables(config, h, w)
     pos_emb = pos_embeds(pos_emb_weight, h, w, config.pos_emb_interpolation_mode)
     rows = config.max_patches
 
@@ -121,7 +130,7 @@ def prepare_host_inputs(
     return {
         "patches": prepare(patches_to_rows(pixel_values)),
         "pos_emb": prepare(pos_emb),
-        "cos": prepare(cos),
-        "sin": prepare(sin),
+        "cos": cos,
+        "sin": sin,
         "logical_n": h * w,
     }
