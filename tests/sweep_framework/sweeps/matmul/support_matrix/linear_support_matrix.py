@@ -45,11 +45,13 @@ def _group(name, title, k, n):
         ),
         golden=lambda inputs: torch.matmul(inputs["act"].float(), inputs["weight"].float()).bfloat16(),
         layouts=["tile"],
-        # Program configs differ in how they block the inner dimension, so accumulation order and the
-        # last bits of the output may differ: judge against the op's own DRAM-interleaved output with
-        # a tolerance that a zeroed tile or garbage (|diff| ~ the value itself, about 1) still fails.
-        reference="baseline",
-        rtol=2**-5,
+        # Program configs block the inner dimension differently, so accumulation order and rounding
+        # differ (up to ~0.3 on unit-sized outputs at K = 4096, with PCC > 0.999). A config passes when
+        # it is as accurate against torch as what the model runs today: no element further from
+        # torch than twice the DRAM-interleaved output's worst error. A zeroed tile or garbage, off
+        # by about the values themselves (1 to 4), still fails.
+        reference="as_accurate",
+        accuracy_factor=2.0,
         atol=2**-5,
     )
 

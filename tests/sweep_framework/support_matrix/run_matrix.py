@@ -81,7 +81,9 @@ def main():
     parser.add_argument("--ids-file", help="vector ids to run, from --write-ids")
     parser.add_argument("--simulator", default=os.environ.get("TT_METAL_SIMULATOR"), help="path to libttsim.so")
     parser.add_argument("--runtime-root", help="tt-metal root whose core descriptor gives 12x10")
-    parser.add_argument("--timeout", type=int, default=900, help="per-test timeout in seconds")
+    # pytest-timeout cannot stop C++ code holding the GIL and kills slow-but-healthy simulator runs, so
+    # it is off by default; the --stall watchdog below handles hangs instead.
+    parser.add_argument("--timeout", type=int, default=0, help="pytest per-test timeout in seconds (0: off)")
     parser.add_argument("--stall", type=int, default=120, help="kill pytest if no result lands for this many seconds")
     parser.add_argument(
         "--slow-stall",

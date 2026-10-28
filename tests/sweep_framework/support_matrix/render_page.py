@@ -21,6 +21,8 @@ CONFIGS = {
     "default": {"label": "Op default", "short": "default"},
 }
 L1_BANK_KB = 1426.6  # 1460864 B per core, from the allocator's Out of Memory messages
+# Encoder-block order, matching groups.py (kept here so this script does not need to import ttnn).
+GROUP_ORDER = ["rms_norm", "linear_wqkv", "concat_heads", "linear_wo", "add", "linear_fc0", "gelu", "linear_fc1"]
 
 
 def parse_id(node_id):
@@ -42,6 +44,15 @@ def describe(record, labels):
     message, error = record["message"], record["longrepr"]
     text = message + "\n" + error
     if record["outcome"] == "crashed":
+        unsupported = re.search(r"UnsupportedFunctionality: ([^\n]{0,80})", error)
+        if unsupported:
+            return (
+                "U",
+                "The simulator cannot model this",
+                f"ttsim stopped: {unsupported.group(1)}; not a result for hardware",
+            )
+        if "rc=-8" in message:
+            return "H", "Crashed on the host", "floating point exception (SIGFPE) killed the process"
         return "H", "Hung or crashed on the device", message
     if record["outcome"] == "passed":
         ulp = re.search(r"Max ULP Delta: ([\d.]+)", message)
@@ -53,6 +64,17 @@ def describe(record, labels):
         if exact:
             detail += f", {100 * int(exact.group(1)) / int(exact.group(2)):.1f}% bit-exact"
         return "P", "Correct", detail
+    accuracy = re.search(
+        r"max \|diff\| ([\d.e-]+); (\d+)/(\d+) outside rtol [\d.]+ atol ([\d.e-]+);.*PCC ([\d.-]+).*?the DRAM-interleaved TILE output is within ([\d.e-]+)",
+        message,
+    )
+    if "[WRONG_RESULT]" in text and accuracy and float(accuracy.group(5)) > 0.99:
+        worst, outside, total, _, pcc, today = accuracy.groups()
+        detail = (
+            f"worst error against torch {float(worst):.3g}, vs {float(today):.3g} for today's DRAM-interleaved run; "
+            f"{outside} of {total} elements beyond twice that; PCC {float(pcc):.4f}"
+        )
+        return "A", "Runs, but less accurate than today", detail
     if "[WRONG_RESULT]" in text:
         exact = re.search(r"exact (\d+)/(\d+)", message)
         pcc = re.search(r"PCC (-?[\d.]+)", message)
@@ -137,7 +159,8 @@ def main():
     for meta in groups.values():
         meta["roles"] = list(meta["roles"].values())
         meta["layouts"].sort(key=["tile", "row_major"].index)
-    data = {"configs": CONFIGS, "l1BankKb": L1_BANK_KB, "groups": list(groups.values()), "cases": cases}
+    ordered = sorted(groups.values(), key=lambda g: GROUP_ORDER.index(g["name"]) if g["name"] in GROUP_ORDER else 99)
+    data = {"configs": CONFIGS, "l1BankKb": L1_BANK_KB, "groups": ordered, "cases": cases}
     html = open(template).read().replace("/*DATA*/null", json.dumps(data, separators=(",", ":")))
     open(out, "w").write(html)
     print(f"wrote {out} with {len(cases)} cases in {len(groups)} groups")

@@ -85,8 +85,11 @@ class OpGroup:
     out_configs: list = field(default_factory=lambda: list(OUTPUT_CONFIGS))
     # "torch": compare with golden(). "baseline": compare with the op's own DRAM-interleaved TILE
     # output (what the model runs today), for ops whose ttnn numerics differ from torch by design, so
-    # that only a config-induced change counts as wrong.
+    # that only a config-induced change counts as wrong. "as_accurate": compare with golden() and
+    # pass when no element is further from it than accuracy_factor times the DRAM-interleaved TILE
+    # output's worst error (or atol), for ops whose program configs legitimately round differently.
     reference: str = "torch"
+    accuracy_factor: float = 2.0
     # Each element must be within ulp_threshold ULP, or, when rtol is set, within atol + rtol * |expected|
     # (for ops whose sharded kernels reduce in a different order, so last bits may legitimately differ).
     ulp_threshold: float = 1
@@ -425,7 +428,12 @@ def run_vector(group, vector, *, device, info=None):
         baseline = group.reference == "baseline"
         expected = _baseline_output(group, device) if baseline else torch_output
         actual = ttnn.to_torch(result)
-        if group.rtol is not None:
+        if group.reference == "as_accurate":
+            baseline_error = (_baseline_output(group, device).float() - torch_output.float()).abs().max().item()
+            bound = max(group.accuracy_factor * baseline_error, group.atol)
+            passed, message = compare_close(torch_output, actual, 0.0, bound)
+            message += f"; vs torch, the DRAM-interleaved TILE output is within {baseline_error:.4g}"
+        elif group.rtol is not None:
             passed, message = compare_close(expected, actual, group.rtol, group.atol)
         else:
             passed, message = compare_with_torch(expected, actual, 0 if baseline else group.ulp_threshold)

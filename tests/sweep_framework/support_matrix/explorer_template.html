@@ -78,7 +78,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
 .s-P { --c: var(--ok); } .s-M { --c: var(--oom); } .s-W { --c: var(--wrong); } .s-R { --c: var(--reject); }
-.s-S { --c: var(--setup); } .s-H { --c: var(--hang); } .s-C { --c: var(--oom); }
+.s-S { --c: var(--setup); } .s-H { --c: var(--hang); } .s-C { --c: var(--oom); } .s-U { --c: var(--setup); } .s-A { --c: var(--oom); }
 .list { display: grid; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .row {
   display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(0, 1.1fr) minmax(0, 1.2fr); gap: 6px 16px; align-items: center;
@@ -159,7 +159,7 @@ footer { color: var(--muted); font-size: 13px; display: grid; gap: 4px; }
 
   <footer>
     <div>Source: tests/ttnn/nightly/unit_tests/operations/test_op_support_matrix.py, run on ttsim (Blackhole) with slow dispatch and a 12 × 10 compute grid.</div>
-    <div>Pass means the output matches its reference: torch within 1 ULP for add, and the op's own DRAM-interleaved output bit for bit for ops whose ttnn numerics differ from torch by design.</div>
+    <div>Pass means the output matches its reference: torch within 1 ULP for add, and the op's own DRAM-interleaved output bit for bit for ops whose ttnn numerics differ from torch by design. “Simulator limit” marks configs ttsim cannot model; they say nothing about hardware.</div>
   </footer>
 </div>
 
@@ -168,8 +168,8 @@ const DATA = /*DATA*/null;
 const C = DATA.configs;
 const ORDER = ["dram_interleaved", "l1_interleaved", "l1_height_sharded", "l1_width_sharded", "l1_block_sharded", "l1_nd_sharded", "dram_width_sharded", "dram_nd_sharded"];
 const OUT_ORDER = ["default", ...ORDER];
-const STATUS = { P: "Pass", M: "Out of L1", W: "Wrong result", R: "Rejected", S: "Input not created", H: "Hang", C: "Wrong config" };
-const STATUS_RANK = { P: 0, W: 1, H: 2, M: 3, R: 4, S: 5, C: 6 };
+const STATUS = { P: "Pass", M: "Out of L1", W: "Wrong result", R: "Rejected", S: "Input not created", H: "Hang or crash", C: "Wrong config", U: "Simulator limit", A: "Less accurate" };
+const STATUS_RANK = { P: 0, A: 1, W: 2, H: 3, M: 4, R: 5, S: 6, C: 7, U: 8 };
 const LAYOUT_NAMES = { tile: "TILE", row_major: "Row-major" };
 const isL1 = k => !!k && k.startsWith("l1_");
 const cfgLabel = k => (C[k] ? C[k].label : k);
@@ -333,8 +333,12 @@ function renderFindings() {
     const inputs = G().roles.filter(r => r.key !== "out").map(r => `${r.label}: ${names(wrong.map(c => c.c[r.key]))}`).join("; ");
     items.push(el("li", {}, `${wrong.length} combinations return wrong values without raising an error. Outputs: ${names(wrong.map(c => effective(c, "out") || c.c.out))}. ${inputs}.`));
   }
+  const lessAccurate = by("A");
+  if (lessAccurate.length) items.push(el("li", {}, `${lessAccurate.length} combinations run and are close to torch (PCC above 0.99) but less accurate than today's DRAM-interleaved run: a few elements are more than twice as far off. Usable if that accuracy is acceptable; the row shows both errors.`));
+  const sim = by("U");
+  if (sim.length) items.push(el("li", {}, `${sim.length} combination${sim.length > 1 ? "s" : ""} stopped the simulator itself (ttsim cannot model what the kernel does). These need checking on hardware.`));
   const hang = by("H");
-  if (hang.length) items.push(el("li", {}, `${hang.length} combination${hang.length > 1 ? "s" : ""} hung on the device and had to be killed. Outputs: ${names(hang.map(c => c.c.out === "default" ? "default" : c.c.out))}. `));
+  if (hang.length) items.push(el("li", {}, `${hang.length} combination${hang.length > 1 ? "s" : ""} hung or crashed and had to be killed. Outputs: ${names(hang.map(c => c.c.out === "default" ? "default" : c.c.out))}. `));
   const rejected = by("R");
   if (rejected.length) {
     const tally = {};
