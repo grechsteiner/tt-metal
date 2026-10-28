@@ -63,6 +63,18 @@ class MoonViTConfig:
         return self.in_channels * self.patch_size * self.patch_size
 
     @property
+    def padded_patch_dim(self) -> int:
+        """`patch_dim` (588) rounded up to a whole tile (608), the width the patch rows and the patch
+        embed weight have on device. The extra columns are explicit zeros on both sides, so the matmul
+        does not depend on the values ttnn leaves in tile padding.
+
+        This can potentially be removed in the future: today both tensors come from `ttnn.from_torch`,
+        which zero-fills tile padding, so 588 works as long as that holds and nothing on device
+        produces the patch rows. Drop it once that is guaranteed and tested.
+        """
+        return -(-self.patch_dim // 32) * 32
+
+    @property
     def merge_area(self) -> int:
         return self.merge_kernel_size[0] * self.merge_kernel_size[1]
 

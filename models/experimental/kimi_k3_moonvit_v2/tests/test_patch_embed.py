@@ -40,7 +40,7 @@ def test_patch_embed(mesh_device, sp_axis, num_links, config, reference, grid):
 
     pos_emb = host_prep.pos_embeds(tt.pos_emb_weight, h, w, config.pos_emb_interpolation_mode)
     out = tt(
-        sp_shard(host_prep.patches_to_rows(pixels), mesh_device, sp_axis, config.max_patches),
+        sp_shard(host_prep.patch_rows(config, pixels), mesh_device, sp_axis, config.max_patches),
         sp_shard(pos_emb, mesh_device, sp_axis, config.max_patches),
     )
     assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, h * w))

@@ -70,10 +70,13 @@ def test_vision_model_loads_reference(host_parameters, shallow_config, shallow_r
     block = tower.encoder.blocks[0]
     torch.testing.assert_close(block.attention.wqkv.weight.data, state["vision_tower.encoder.blocks.0.wqkv.weight"].T)
     torch.testing.assert_close(block.norm0.weight.data, state["vision_tower.encoder.blocks.0.norm0.weight"][None])
+    proj = tower.patch_embed.proj.weight.data
+    assert proj.shape == (shallow_config.padded_patch_dim, shallow_config.hidden_size)
     torch.testing.assert_close(
-        tower.patch_embed.proj.weight.data,
+        proj[: shallow_config.patch_dim],
         state["vision_tower.patch_embed.proj.weight"].reshape(shallow_config.hidden_size, -1).T,
     )
+    assert not proj[shallow_config.patch_dim :].any()
     assert torch.equal(tower.patch_embed.pos_emb_weight, state["vision_tower.patch_embed.pos_emb.weight"])
     torch.testing.assert_close(tt.mm_projector.fc0.weight.data, state["mm_projector.proj.0.weight"].T)
     torch.testing.assert_close(tt.mm_projector.fc1.weight.data, state["mm_projector.proj.2.weight"].T)

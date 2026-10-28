@@ -24,6 +24,7 @@ def test_default_config_is_k3():
     assert MoonViTConfig.from_hf_config(REFERENCE_CONFIG) == MoonViTConfig()
     assert MoonViTConfig().head_dim == 128
     assert MoonViTConfig().patch_dim == 588
+    assert MoonViTConfig().padded_patch_dim == 608
     assert MoonViTConfig().merged_dim == 4096
 
 

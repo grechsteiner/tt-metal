@@ -8,7 +8,8 @@ Each function reproduces one piece of `modeling_kimi_k3.py` in the form the devi
 `tests/test_host_prep.py` checks it against the reference module. Only torch is needed: nothing here
 imports the reference or `transformers`.
 
-  * `patches_to_rows`: the Conv2d patch embed as a matmul over flattened patches.
+  * `patches_to_rows`: the Conv2d patch embed as a matmul over flattened patches; `patch_rows` pads
+    them with zero columns to `config.padded_patch_dim`.
   * `pos_embeds`: the learned 64x64 table interpolated to the image grid.
   * `rope_cos_sin` + `rotate_pairs`: the complex-multiply 2D RoPE as `x * cos + rotate(x) * sin`,
     the form `ttnn.experimental.rotary_embedding_llama` computes with a pair-swapping `trans_mat`.
@@ -34,6 +35,12 @@ from .model_config import MoonViTConfig, check_grid
 def patches_to_rows(pixel_values: torch.Tensor) -> torch.Tensor:
     """(L, C, p, p) -> (L, C*p*p), matching `proj.weight.reshape(hidden, C*p*p)`."""
     return pixel_values.reshape(pixel_values.shape[0], -1)
+
+
+def patch_rows(config: MoonViTConfig, pixel_values: torch.Tensor) -> torch.Tensor:
+    """(L, C, p, p) -> (L, padded_patch_dim): `patches_to_rows` with zero columns up to a whole tile."""
+    rows = patches_to_rows(pixel_values)
+    return F.pad(rows, (0, config.padded_patch_dim - rows.shape[-1]))
 
 
 def pos_embeds(weight: torch.Tensor, h: int, w: int, interpolation_mode: str) -> torch.Tensor:
@@ -116,7 +123,7 @@ def prepare_host_inputs(
 ) -> dict:
     """Everything the device needs for one image, in window order and padded to `config.max_patches` rows.
 
-    Returns `patches` (S, patch_dim), `pos_emb` (S, hidden), `cos` and `sin` (S, head_dim) and
+    Returns `patches` (S, padded_patch_dim), `pos_emb` (S, hidden), `cos` and `sin` (S, head_dim) and
     `logical_n`, the number of real rows.
     """
     h, w = check_grid(grid_thws, config)
@@ -128,7 +135,7 @@ def prepare_host_inputs(
         return pad_rows(to_window_order(x, h, w, config.merge_kernel_size), rows)
 
     return {
-        "patches": prepare(patches_to_rows(pixel_values)),
+        "patches": prepare(patch_rows(config, pixel_values)),
         "pos_emb": prepare(pos_emb),
         "cos": cos,
         "sin": sin,

@@ -86,7 +86,8 @@ def test_prepare_host_inputs(config, tower):
     inputs = host_prep.prepare_host_inputs(config, tower.patch_embed.pos_emb.weight, pixels, grid_thws)
     n, rows = h * w, config.max_patches
     assert inputs["logical_n"] == n
-    assert inputs["patches"].shape == (rows, config.patch_dim)
+    assert inputs["patches"].shape == (rows, config.padded_patch_dim)
+    assert not inputs["patches"][:, config.patch_dim :].any()
     assert inputs["pos_emb"].shape == (rows, config.hidden_size)
     assert inputs["cos"].shape == inputs["sin"].shape == (rows, config.head_dim)
     for key in ("patches", "pos_emb", "cos", "sin"):
@@ -96,7 +97,7 @@ def test_prepare_host_inputs(config, tower):
     cos, sin = host_prep.rope_cos_sin(config, h, w)
     torch.testing.assert_close((inputs["cos"], inputs["sin"]), host_prep.rope_tables(config, h, w))
     raster = {
-        "patches": host_prep.patches_to_rows(pixels),
+        "patches": host_prep.patch_rows(config, pixels),
         "pos_emb": host_prep.pos_embeds(tower.patch_embed.pos_emb.weight, h, w, config.pos_emb_interpolation_mode),
         "cos": cos,
         "sin": sin,
