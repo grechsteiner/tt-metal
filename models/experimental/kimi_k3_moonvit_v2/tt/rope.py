@@ -7,9 +7,9 @@
 The reference rotates adjacent (x0, x1) pairs by a complex multiply in fp32. That equals
 `x * cos + (x @ trans_mat) * sin` with cos/sin repeated per pair and `trans_mat` mapping
 (x0, x1) -> (-x1, x0), which is what `ttnn.experimental.rotary_embedding_llama` computes
-(`reference.functional.rope_cos_sin` / `rotate_pairs`). The tables are shared by every layer
+(`host_prep.rope_cos_sin` / `rotate_pairs`). The tables are shared by every layer
 and head, so they are built once per image. Their rows are in window order, like the activations
-(`reference.functional.to_window_order`).
+(`host_prep.to_window_order`).
 
 The tables are `DeviceInput`s: written in place for each image, so a trace can replay them.
 """
@@ -22,7 +22,7 @@ import torch
 
 import ttnn
 
-from ..reference import functional
+from . import host_prep
 from .device_input import DeviceInput
 from .model_config import MoonViTConfig, VisionParallel
 
@@ -44,15 +44,14 @@ class TT_Rope:
     def write(self, cos: torch.Tensor, sin: torch.Tensor) -> RopeTensors:
         """Fill the tables from (max_patches, head_dim) host cos/sin, already in window order and padded."""
         if self.trans_mat.tensor is None:
-            self.trans_mat.write(functional.rot_transformation_mat())
+            self.trans_mat.write(host_prep.rot_transformation_mat())
         return RopeTensors(self.cos.write(cos), self.sin.write(sin), self.trans_mat.tensor)
 
     def get_rot_mats(self, h: int, w: int) -> RopeTensors:
         """`rope_cos_sin(config, h, w)` in window order, padded to `max_patches` rows, written to the tables."""
-        cos, sin = functional.rope_cos_sin(self.config, h, w)
+        cos, sin = host_prep.rope_cos_sin(self.config, h, w)
         kernel = self.config.merge_kernel_size
         cos, sin = (
-            functional.pad_rows(functional.to_window_order(t, h, w, kernel), self.config.max_patches)
-            for t in (cos, sin)
+            host_prep.pad_rows(host_prep.to_window_order(t, h, w, kernel), self.config.max_patches) for t in (cos, sin)
         )
         return self.write(cos, sin)

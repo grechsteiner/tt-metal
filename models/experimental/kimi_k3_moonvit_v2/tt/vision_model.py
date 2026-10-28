@@ -9,7 +9,7 @@ merger). `TT_MoonViT_Vision_Model` adds the projector (`mm_projector`), so it ma
 language-model embeddings.
 
 One still image per call. Its patches are put in window order and padded to `config.max_patches`
-rows on the host (`reference.functional.prepare_host_inputs`), written split along `sp_axis` into
+rows on the host (`host_prep.prepare_host_inputs`), written split along `sp_axis` into
 device inputs allocated once (`DeviceInput`, so a trace can replay them), run through the tower,
 merger and projector, and gathered back with the padding dropped. The merged tokens come out in the
 reference's order. Weights are replicated and activations are DRAM interleaved.
@@ -24,7 +24,7 @@ import torch
 
 import ttnn
 
-from ..reference.functional import prepare_host_inputs
+from .host_prep import prepare_host_inputs
 from .ccl import ParallelFactor, TT_CCL
 from .device_input import DeviceInput
 from .model_config import MoonViTConfig, VisionParallel, check_grid, compute_kernel_config, resolve_parallel
@@ -106,7 +106,7 @@ class TT_MoonViT_Vision_Model(Module):
         )
 
     def prepare_inputs(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> dict:
-        """Host prep (`reference.functional.prepare_host_inputs`), then write it, split along `sp_axis`,
+        """Host prep (`host_prep.prepare_host_inputs`), then write it, split along `sp_axis`,
         into the same device tensors on every call.
 
         Returns `patches` [1, 1, S/sp, patch_dim], `pos_emb` [1, 1, S/sp, hidden], `rope` and

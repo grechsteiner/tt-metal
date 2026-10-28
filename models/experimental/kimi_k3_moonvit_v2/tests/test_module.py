@@ -17,7 +17,7 @@ import pytest
 import torch
 
 import ttnn
-from models.experimental.kimi_k3_moonvit_v2.reference import functional
+from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tests.common import SHALLOW_REFERENCE, random_patches
 from models.experimental.kimi_k3_moonvit_v2.tt import module, vision_model
 from models.experimental.kimi_k3_moonvit_v2.tt.device_input import DeviceInput
@@ -138,7 +138,7 @@ def test_prepare_inputs_reuses_device_tensors(host_parameters, host_inputs, conf
     assert all(b is a for a, b in zip(first["rope"], second["rope"]))
 
     pos_emb_weight = shallow_reference.vision_tower.patch_embed.pos_emb.weight
-    expected = functional.prepare_host_inputs(config, pos_emb_weight, pixels, grid_thws)
+    expected = host_prep.prepare_host_inputs(config, pos_emb_weight, pixels, grid_thws)
     for key, actual in (
         ("patches", second["patches"]),
         ("pos_emb", second["pos_emb"]),

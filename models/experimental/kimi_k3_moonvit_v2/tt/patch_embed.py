@@ -5,11 +5,11 @@
 """Patch embedding: `MoonVision3dPatchEmbed` in the reference.
 
 The reference is a Conv2d whose kernel equals its stride over patches the processor has already
-cut, which makes it a matmul over each flattened 3x14x14 patch (`reference.functional.patches_to_rows`).
+cut, which makes it a matmul over each flattened 3x14x14 patch (`host_prep.patches_to_rows`).
 So `proj` is a Linear and `_prepare_torch_state` flattens the conv weight into it.
 
 The 64x64 position table stays on the host. It is interpolated to the image's grid there
-(`reference.functional.pos_embeds`) and uploaded with the patches, so `forward` only adds it.
+(`host_prep.pos_embeds`) and uploaded with the patches, so `forward` only adds it.
 """
 
 from __future__ import annotations

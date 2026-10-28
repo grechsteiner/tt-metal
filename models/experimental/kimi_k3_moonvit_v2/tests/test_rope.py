@@ -11,7 +11,7 @@ from __future__ import annotations
 import torch
 
 import ttnn
-from models.experimental.kimi_k3_moonvit_v2.reference import functional
+from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import apply_rope
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     assert_pcc,
@@ -42,8 +42,8 @@ def test_rope_tables(mesh_device, sp_axis, num_links, config, grid):
     previous = tt_rope.get_rot_mats(8, 8)
     rope = tt_rope.get_rot_mats(h, w)
     assert all(a is b for a, b in zip(rope, previous))
-    cos, sin = functional.rope_cos_sin(config, h, w)
-    cos, sin = (functional.to_window_order(t, h, w, config.merge_kernel_size) for t in (cos, sin))
+    cos, sin = host_prep.rope_cos_sin(config, h, w)
+    cos, sin = (host_prep.to_window_order(t, h, w, config.merge_kernel_size) for t in (cos, sin))
     assert_pcc(cos, sp_gather(rope.cos, mesh_device, sp_axis, h * w), pcc=0.9999)
     assert_pcc(sin, sp_gather(rope.sin, mesh_device, sp_axis, h * w), pcc=0.9999)
 
@@ -62,8 +62,8 @@ def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, grid):
     tt_rope = build(mesh_device, sp_axis, num_links, config)
     tt_rope.get_rot_mats(8, 8)
     rope = tt_rope.get_rot_mats(h, w)
-    q_window = functional.to_window_order(q, h, w, config.merge_kernel_size)
+    q_window = host_prep.to_window_order(q, h, w, config.merge_kernel_size)
     q_tt = sp_shard(q_window.transpose(0, 1), mesh_device, sp_axis, config.max_patches)  # [1, heads, S/sp, head_dim]
     out = ttnn.experimental.rotary_embedding_llama(q_tt, rope.cos, rope.sin, rope.trans_mat, is_decode_mode=False)
     out = sp_gather(out, mesh_device, sp_axis, h * w).transpose(0, 1)
-    assert_pcc(golden, functional.from_window_order(out, h, w, config.merge_kernel_size))
+    assert_pcc(golden, host_prep.from_window_order(out, h, w, config.merge_kernel_size))

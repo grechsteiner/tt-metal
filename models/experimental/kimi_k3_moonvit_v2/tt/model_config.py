@@ -7,7 +7,7 @@
 `MoonViTConfig` holds the architecture; its defaults are the Kimi-K3 `vision_config`, and
 `from_hf_config` reads the same fields from a checkpoint's `config.json`. `VisionParallel` is the
 mesh layout the TT modules receive, resolved from a sequence-parallel `ParallelFactor` and the
-`TT_CCL` that owns the ring resources (`ccl.py`). This module imports no ttnn at import time, so the CPU reference can use it.
+`TT_CCL` that owns the ring resources (`ccl.py`). This module imports no ttnn at import time, so host prep and the CPU tests can use it.
 """
 
 from __future__ import annotations
