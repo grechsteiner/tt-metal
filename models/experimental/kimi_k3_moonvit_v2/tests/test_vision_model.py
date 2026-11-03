@@ -9,7 +9,7 @@ from __future__ import annotations
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
-    assert_pcc,
+    assert_quality,
     ATTENTION_GRIDS,
     NOT_WRITTEN,
     SHALLOW_REFERENCE,
@@ -46,4 +46,4 @@ def test_vision_model(mesh_device, sp_axis, num_links, shallow_config, shallow_r
     pixels, grid_thws = random_patches(shallow_config, grid)
     with torch.no_grad():
         (golden,) = shallow_reference(pixels.to(torch.bfloat16), grid_thws)
-    assert_pcc(golden, tt.run(pixels, grid_thws))
+    assert_quality(golden, tt.run(pixels, grid_thws))

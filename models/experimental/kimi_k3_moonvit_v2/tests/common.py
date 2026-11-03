@@ -11,6 +11,7 @@ import os
 
 import pytest
 import torch
+from loguru import logger
 
 import ttnn
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import MoonViTConfig
@@ -139,9 +140,60 @@ def ring_parallel(mesh_device, sp_axis: int | None, num_links: int) -> tuple[Par
     return ParallelFactor(sp_factor, sp_axis), TT_CCL(mesh_device, num_links=num_links, topology=ttnn.Topology.Ring)
 
 
-def assert_pcc(golden: torch.Tensor, actual: torch.Tensor, pcc: float = 0.99) -> None:
-    passing, found = comp_pcc(golden.float(), actual.float(), pcc)
-    assert passing, found
+def quality(golden: torch.Tensor, actual: torch.Tensor) -> dict[str, float]:
+    """How close `actual` is to `golden`:
+
+    - `pcc`: Pearson correlation (`comp_pcc`). Blind to a scale or offset error.
+    - `relative_rmse`: RMS error over the golden's standard deviation. Catches what PCC misses.
+    - `ccc`: concordance correlation, PCC lowered by any scale or offset difference.
+    - `max_abs`, `max_rel`: the largest element differences (as `comp_allclose` reports them; `max_rel`
+      over nonzero golden values), for diagnosis.
+    """
+    golden, actual = golden.float(), actual.float()
+    _, pcc = comp_pcc(golden, actual, 0.0)
+    g, a = golden.flatten().double(), actual.flatten().double()
+    std_g, std_a = g.std().item(), a.std().item()
+    cov = ((g - g.mean()) * (a - a.mean())).mean().item()
+    ccc = 2 * cov / (std_g**2 + std_a**2 + (g.mean() - a.mean()).item() ** 2)
+    relative_rmse = (g - a).pow(2).mean().sqrt().item() / std_g
+    diff = (golden - actual).abs()
+    nonzero = golden != 0
+    max_rel = (diff[nonzero] / golden[nonzero].abs()).max().item() if nonzero.any() else 0.0
+    max_abs = diff.max().item()
+    return {"pcc": pcc, "relative_rmse": relative_rmse, "ccc": ccc, "max_abs": max_abs, "max_rel": max_rel}
+
+
+def format_quality(q: dict[str, float]) -> str:
+    return (
+        f"PCC {q['pcc']:.6f}, relative RMSE {q['relative_rmse']:.2%}, CCC {q['ccc']:.6f}, "
+        f"max abs {q['max_abs']:.3g}, max rel {q['max_rel']:.3g}"
+    )
+
+
+def quality_failures(q: dict[str, float], pcc: float, relative_rmse: float | None) -> list[str]:
+    failures = []
+    if not q["pcc"] >= pcc:
+        failures.append(f"PCC {q['pcc']:.6f} < {pcc}")
+    if relative_rmse is not None and not q["relative_rmse"] <= relative_rmse:
+        failures.append(f"relative RMSE {q['relative_rmse']:.2%} > {relative_rmse:.2%}")
+    return failures
+
+
+def assert_quality(
+    golden: torch.Tensor, actual: torch.Tensor, pcc: float = 0.99, relative_rmse: float | None = None, label: str = ""
+) -> dict[str, float]:
+    """Assert PCC >= `pcc` and relative RMSE <= `relative_rmse`; log every `quality` measure.
+
+    Thresholds follow tt_dit's `assert_quality` (PCC plus relative RMSE); CCC and the largest element
+    differences are logged, not asserted. Each test's relative RMSE limit is about twice the largest
+    value measured on Blackhole over its cases (random and checkpoint weights, both meshes), rounded
+    up. Tests whose forward is not written yet have none (`relative_rmse=None` logs it only)."""
+    label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
+    q = quality(golden, actual)
+    logger.info(f"{label}: {format_quality(q)}")
+    failures = quality_failures(q, pcc, relative_rmse)
+    assert not failures, f"{label}: {failures}"
+    return q
 
 
 def random_tensor(*shape: int, dtype: torch.dtype = torch.bfloat16, seed: int = 0) -> torch.Tensor:

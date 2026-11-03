@@ -10,7 +10,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -42,4 +42,4 @@ def test_projector(mesh_device, sp_axis, num_links, config, reference, size):
 
     rows = config.max_patches // config.merge_area
     out = tt(sp_shard(x.reshape(n, config.merged_dim), mesh_device, sp_axis, rows))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, n))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, n))

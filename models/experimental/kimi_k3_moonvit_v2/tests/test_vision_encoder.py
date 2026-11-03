@@ -18,7 +18,7 @@ import ttnn
 
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
-    assert_pcc,
+    assert_quality,
     ATTENTION_GRIDS,
     RING,
     SHALLOW_REFERENCE,
@@ -61,4 +61,4 @@ def test_vision_encoder(mesh_device, sp_axis, num_links, shallow_config, shallow
     x = patch_embed(patches, pos_emb)
     out = encoder(x, rope, logical_n)
     out = sp_gather(out, mesh_device, sp_axis, h * w)
-    assert_pcc(golden, host_prep.from_window_order(out, h, w, config.merge_kernel_size))
+    assert_quality(golden, host_prep.from_window_order(out, h, w, config.merge_kernel_size), relative_rmse=0.04)

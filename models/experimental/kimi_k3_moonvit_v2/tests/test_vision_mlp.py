@@ -11,7 +11,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -38,7 +38,7 @@ def check_vision_mlp(mesh_device, sp_axis, config, reference, layer, grid, rows)
         golden = reference.vision_tower.encoder.blocks[layer].mlp(x)
 
     out = tt(sp_shard(x, mesh_device, sp_axis, rows))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, h * w))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, h * w), relative_rmse=0.005)
 
 
 @NOT_ON_SIMULATOR

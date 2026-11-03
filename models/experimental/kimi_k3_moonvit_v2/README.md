@@ -45,7 +45,8 @@ needs `transformers`, as upstream does; tests also use `models.common.utility_fu
 The TT modules are `tt/module.py` `Module`s whose children carry the reference's names, so each
 loads the matching reference `state_dict()` with `load_torch_state_dict`. `load_cached` caches the
 loaded weights as `.tensorbin` files. Tests build both, run the same input, and compare with
-`comp_pcc` from `models.common.utility_functions`.
+`assert_quality` (`tests/common.py`): PCC (`comp_pcc`) and relative RMSE (RMS error over the reference's
+standard deviation) are asserted; CCC and the largest element differences are logged.
 
 ```python
 ccl = TT_CCL(mesh_device, num_links=2, topology=ttnn.Topology.Ring)

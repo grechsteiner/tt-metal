@@ -11,7 +11,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -48,7 +48,7 @@ def check_linear(mesh_device, sp_axis, config, torch_linear, n: int, rows: int) 
         golden = torch_linear(x)
 
     out = tt(sp_shard(x, mesh_device, sp_axis, rows))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, n))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, n), relative_rmse=0.003)
 
 
 @P150_AND_RING
@@ -92,4 +92,4 @@ def test_patch_embed_linear(mesh_device, sp_axis, num_links, config, reference, 
         golden = reference.vision_tower.patch_embed.proj(pixels).flatten(1)
 
     out = tt.proj(sp_shard(host_prep.patch_rows(config, pixels), mesh_device, sp_axis, config.max_patches))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, pixels.shape[0]))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, pixels.shape[0]), relative_rmse=0.004)

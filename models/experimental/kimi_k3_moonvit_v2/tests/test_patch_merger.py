@@ -13,7 +13,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import tpool_patch_merger
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -40,4 +40,4 @@ def test_patch_merger(mesh_device, sp_axis, num_links, config, size):
 
     x_window = host_prep.to_window_order(x, h, w, config.merge_kernel_size)
     out = tt(sp_shard(x_window, mesh_device, sp_axis, config.max_patches))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, golden.shape[0]))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, golden.shape[0]))

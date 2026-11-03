@@ -11,7 +11,7 @@ import torch
 import ttnn
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -45,4 +45,4 @@ def test_patch_embed(mesh_device, sp_axis, num_links, config, reference, size):
         sp_shard(host_prep.patch_rows(config, pixels), mesh_device, sp_axis, config.max_patches),
         sp_shard(pos_emb, mesh_device, sp_axis, config.max_patches, ttnn.float32),
     )
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, h * w))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, h * w), relative_rmse=0.005)

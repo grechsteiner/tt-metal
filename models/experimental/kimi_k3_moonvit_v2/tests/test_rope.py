@@ -15,7 +15,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import apply_rope
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -47,8 +47,8 @@ def test_rope_tables(mesh_device, sp_axis, num_links, config, size):
     assert all(a is b for a, b in zip(rope, previous))
     cos, sin = host_prep.rope_cos_sin(config, h, w)
     cos, sin = (host_prep.to_window_order(t, h, w, config.merge_kernel_size) for t in (cos, sin))
-    assert_pcc(cos, sp_gather(rope.cos, mesh_device, sp_axis, h * w), pcc=0.9999)
-    assert_pcc(sin, sp_gather(rope.sin, mesh_device, sp_axis, h * w), pcc=0.9999)
+    assert_quality(cos, sp_gather(rope.cos, mesh_device, sp_axis, h * w), pcc=0.9999, relative_rmse=0.003, label="cos")
+    assert_quality(sin, sp_gather(rope.sin, mesh_device, sp_axis, h * w), pcc=0.9999, relative_rmse=0.003, label="sin")
 
 
 @P150_AND_RING
@@ -70,4 +70,4 @@ def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, size):
     q_tt = sp_shard(q_window.transpose(0, 1), mesh_device, sp_axis, config.max_patches)  # [1, heads, S/sp, head_dim]
     out = ttnn.experimental.rotary_embedding_llama(q_tt, rope.cos, rope.sin, rope.trans_mat, is_decode_mode=False)
     out = sp_gather(out, mesh_device, sp_axis, h * w).transpose(0, 1)
-    assert_pcc(golden, host_prep.from_window_order(out, h, w, config.merge_kernel_size))
+    assert_quality(golden, host_prep.from_window_order(out, h, w, config.merge_kernel_size), relative_rmse=0.008)

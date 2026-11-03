@@ -15,7 +15,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
-    assert_pcc,
+    assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
@@ -42,7 +42,7 @@ def check_rms_norm(mesh_device, sp_axis, torch_norm, eps: float, n: int, rows: i
         golden = torch_norm(x)
 
     out = tt(sp_shard(x, mesh_device, sp_axis, rows))
-    assert_pcc(golden, sp_gather(out, mesh_device, sp_axis, n))
+    assert_quality(golden, sp_gather(out, mesh_device, sp_axis, n), relative_rmse=0.01)
 
 
 @P150_AND_RING

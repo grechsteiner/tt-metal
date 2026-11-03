@@ -25,11 +25,13 @@ from loguru import logger
 
 import ttnn
 
-from models.common.utility_functions import comp_pcc
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import checkpoint_path
 from models.experimental.kimi_k3_moonvit_v2.tests import goldens
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     RING,
+    format_quality,
+    quality,
+    quality_failures,
     random_patches,
     ring_parallel,
     sp_gather,
@@ -49,10 +51,12 @@ from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import TT_MoonViT_En
 
 H, W, SEED = 256, 256, 0
 CHECKPOINT = pytest.mark.parametrize("reference", ["checkpoint"], indirect=True)
-# Against the fp32 outputs. Not yet measured for every layer or the 27-layer encoder: the residual
-# stream reaches |x| ~ 500 before the final norm; set from the measured PCC if 0.99 proves too tight.
+# Against the fp32 outputs, over every row and over each chip's quarter. Relative RMSE is RMS error over
+# the golden's standard deviation; limits as in common.py (measured: layers <= 1.4%, encoder <= 10.5%).
 LAYER_PCC = 0.99
+LAYER_RELATIVE_RMSE = 0.03
 ENCODER_PCC = 0.99
+ENCODER_RELATIVE_RMSE = 0.15
 
 
 @pytest.fixture
@@ -67,18 +71,29 @@ def saved():
     return lambda name: goldens.load(H, W, SEED, name)
 
 
-def check_pcc(golden: torch.Tensor, actual: torch.Tensor, pcc: float, config, sp_factor: int, label: str) -> None:
-    """PCC over every row, then over each chip's quarter. Both in raster order; the quarters are taken
-    in window order, the order the rows are split across the ring."""
-    results = [("all", *comp_pcc(golden.float(), actual.float(), pcc))]
+def check_quality(
+    golden: torch.Tensor,
+    actual: torch.Tensor,
+    pcc: float,
+    relative_rmse: float | None,
+    config,
+    sp_factor: int,
+    label: str,
+) -> None:
+    """`quality` over every row, then over each chip's quarter. Both in raster order; the quarters are
+    taken in window order, the order the rows are split across the ring."""
+    parts = [("all", golden, actual)]
     golden_w, actual_w = (host_prep.to_window_order(t, H, W, config.merge_kernel_size) for t in (golden, actual))
     rows = golden_w.shape[0] // sp_factor
     for chip in range(sp_factor):
         part = slice(chip * rows, (chip + 1) * rows)
-        results.append((f"chip {chip}", *comp_pcc(golden_w[part].float(), actual_w[part].float(), pcc)))
-    logger.info(f"{label}: " + ", ".join(f"{name} PCC {value}" for name, _, value in results))
-    failed = [f"{name} PCC {value}" for name, passing, value in results if not passing]
-    assert not failed, f"{label} below {pcc}: {failed}"
+        parts.append((f"chip {chip}", golden_w[part], actual_w[part]))
+    failed = []
+    for name, g, a in parts:
+        q = quality(g, a)
+        logger.info(f"{label} {name}: {format_quality(q)}")
+        failed += [f"{name} {failure}" for failure in quality_failures(q, pcc, relative_rmse)]
+    assert not failed, f"{label}: {failed}"
 
 
 @RING
@@ -100,7 +115,15 @@ def test_full_size_layer(mesh_device, sp_axis, num_links, config, reference, sav
     logical_n = logical_length_tensor(mesh_device, H * W)
     out = tt(sp_shard(x_window, mesh_device, sp_axis, config.max_patches, ttnn.float32), rope, logical_n)
     out = host_prep.from_window_order(sp_gather(out, mesh_device, sp_axis, H * W), H, W, config.merge_kernel_size)
-    check_pcc(saved(goldens.block_file(layer)[:-3]), out, LAYER_PCC, config, parallel.sp_factor, f"layer {layer}")
+    check_quality(
+        saved(goldens.block_file(layer)[:-3]),
+        out,
+        LAYER_PCC,
+        LAYER_RELATIVE_RMSE,
+        config,
+        parallel.sp_factor,
+        f"layer {layer}",
+    )
 
 
 @RING
@@ -127,6 +150,16 @@ def test_full_size_encoder(mesh_device, sp_axis, num_links, config, reference, s
 
     x = patch_embed(patches, pos_emb)
     # Checked first so a wrong encoder input is reported as such, not as an encoder error.
-    check_pcc(saved("patch_embed"), to_host(x), LAYER_PCC, config, parallel.sp_factor, "patch embed")
+    check_quality(
+        saved("patch_embed"), to_host(x), LAYER_PCC, LAYER_RELATIVE_RMSE, config, parallel.sp_factor, "patch embed"
+    )
     out = encoder(x, rope, logical_length_tensor(mesh_device, host["logical_n"]))
-    check_pcc(saved("final_layernorm"), to_host(out), ENCODER_PCC, config, parallel.sp_factor, "encoder")
+    check_quality(
+        saved("final_layernorm"),
+        to_host(out),
+        ENCODER_PCC,
+        ENCODER_RELATIVE_RMSE,
+        config,
+        parallel.sp_factor,
+        "encoder",
+    )
