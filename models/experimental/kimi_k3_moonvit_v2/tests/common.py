@@ -141,6 +141,12 @@ def assert_pcc(golden: torch.Tensor, actual: torch.Tensor, pcc: float = 0.99) ->
     assert passing, found
 
 
+def random_tensor(*shape: int, dtype: torch.dtype = torch.bfloat16, seed: int = 0) -> torch.Tensor:
+    """Standard-normal test input from its own seeded generator, so it does not depend on the global
+    RNG or on which tests ran before."""
+    return torch.randn(shape, generator=torch.Generator().manual_seed(seed), dtype=dtype)
+
+
 def random_patches(config: MoonViTConfig, grid_thws: list[tuple[int, int, int]], seed: int = 0):
     """Patches in the processor's output range ((x/255 - 0.5)/0.5 lies in [-1, 1])."""
     n = sum(t * h * w for t, h, w in grid_thws)

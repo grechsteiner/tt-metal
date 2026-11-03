@@ -11,6 +11,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    random_tensor,
     assert_pcc,
     ATTENTION_GRIDS,
     REFERENCE_LAYERS,
@@ -39,7 +40,7 @@ def test_vision_block(mesh_device, sp_axis, num_links, config, reference, grid, 
 
     grid_thws = torch.tensor(grid)
     h, w = check_grid(grid_thws, config)
-    x = torch.randn(h * w, config.hidden_size, dtype=torch.bfloat16)
+    x = random_tensor(h * w, config.hidden_size)
     cu_seqlens, max_seqlen, rope_freqs_cis = reference_rope(reference, grid_thws)
     with torch.no_grad():
         golden = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=rope_freqs_cis)

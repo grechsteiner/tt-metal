@@ -103,5 +103,20 @@ length. Each size has one grid per mesh: `full` (256x256 on the ring, 128x128 on
 inside a tile, and `small` (40x100) is almost all padding. Attention, the block, the encoder and the
 full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU golden builds L x L scores per head.
 
+Full size (`test_full_size.py`, 4 Blackhole chips, checkpoint only): a 256x256 image fills all 65,536
+rows, and each encoder layer on its own and the full 27-layer encoder are compared against reference
+outputs saved once by `tests/goldens.py`. They are fp32, with attention computed in chunks of query
+rows (~1.5 min and ~25 GB of RAM per layer, about 45 min for all 27): the bf16 reference rounds more
+than the device from about layer 9 on, and upstream's eager attention in fp32 would need about 1 TB.
+`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`
+(about 7.3 GB for 256x256 fp32); the tests skip while it is unset or the outputs do not exist:
+
+```bash
+export KIMI_K3_HF_MODEL=/path/to/Kimi-K3
+export MOONVIT_GOLDEN_DIR=/path/to/goldens
+python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens --grid 256x256   # resumable
+pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py
+```
+
 Device tests that need a forward are marked `xfail(raises=NotImplementedError, strict=True)`, so
 each starts failing as a reminder once its forward runs.
