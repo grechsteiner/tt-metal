@@ -23,6 +23,8 @@ import pytest
 import torch
 from loguru import logger
 
+import ttnn
+
 from models.common.utility_functions import comp_pcc
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import checkpoint_path
 from models.experimental.kimi_k3_moonvit_v2.tests import goldens
@@ -96,7 +98,7 @@ def test_full_size_layer(mesh_device, sp_axis, num_links, config, reference, sav
     rope = TT_Rope(config, mesh_device=mesh_device, parallel=parallel).write(*host_prep.rope_tables(config, H, W))
     x_window = host_prep.to_window_order(x, H, W, config.merge_kernel_size)
     logical_n = logical_length_tensor(mesh_device, H * W)
-    out = tt(sp_shard(x_window, mesh_device, sp_axis, config.max_patches), rope, logical_n)
+    out = tt(sp_shard(x_window, mesh_device, sp_axis, config.max_patches, ttnn.float32), rope, logical_n)
     out = host_prep.from_window_order(sp_gather(out, mesh_device, sp_axis, H * W), H, W, config.merge_kernel_size)
     check_pcc(saved(goldens.block_file(layer)[:-3]), out, LAYER_PCC, config, parallel.sp_factor, f"layer {layer}")
 
@@ -118,7 +120,7 @@ def test_full_size_encoder(mesh_device, sp_axis, num_links, config, reference, s
     host = host_prep.prepare_host_inputs(config, patch_embed.pos_emb_weight, pixels, grid_thws)
     rope = TT_Rope(config, mesh_device=mesh_device, parallel=parallel).write(host["cos"], host["sin"])
     patches = sp_shard(host["patches"], mesh_device, sp_axis, config.max_patches)
-    pos_emb = sp_shard(host["pos_emb"], mesh_device, sp_axis, config.max_patches)
+    pos_emb = sp_shard(host["pos_emb"], mesh_device, sp_axis, config.max_patches, ttnn.float32)
 
     def to_host(t):
         return host_prep.from_window_order(sp_gather(t, mesh_device, sp_axis, H * W), H, W, config.merge_kernel_size)

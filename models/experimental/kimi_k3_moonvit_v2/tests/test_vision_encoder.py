@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import torch
 
+import ttnn
+
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     assert_pcc,
@@ -53,7 +55,7 @@ def test_vision_encoder(mesh_device, sp_axis, num_links, shallow_config, shallow
     host = host_prep.prepare_host_inputs(config, patch_embed.pos_emb_weight, pixels, grid_thws)
     rope = TT_Rope(config, mesh_device=mesh_device, parallel=parallel).write(host["cos"], host["sin"])
     patches = sp_shard(host["patches"], mesh_device, sp_axis, config.max_patches)
-    pos_emb = sp_shard(host["pos_emb"], mesh_device, sp_axis, config.max_patches)
+    pos_emb = sp_shard(host["pos_emb"], mesh_device, sp_axis, config.max_patches, ttnn.float32)
     logical_n = logical_length_tensor(mesh_device, host["logical_n"])
 
     x = patch_embed(patches, pos_emb)

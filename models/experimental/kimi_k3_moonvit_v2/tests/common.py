@@ -174,9 +174,10 @@ def reference_rope(reference, grid_thws: torch.Tensor) -> tuple[torch.Tensor, to
     return cu_seqlens, max_seqlen, rope_freqs_cis
 
 
-def sp_shard(x: torch.Tensor, mesh_device, sp_axis: int | None, rows: int) -> ttnn.Tensor:
-    """(L, C) or (H, L, C) on the host -> [1, 1 or H, rows, C] bf16 on device, zero-padded to `rows`,
-    split along `sp_axis`, or replicated when `sp_axis` is None."""
+def sp_shard(x: torch.Tensor, mesh_device, sp_axis: int | None, rows: int, dtype=ttnn.bfloat16) -> ttnn.Tensor:
+    """(L, C) or (H, L, C) on the host -> [1, 1 or H, rows, C] `dtype` on device, zero-padded to `rows`,
+    split along `sp_axis`, or replicated when `sp_axis` is None. fp32 for the encoder's residual stream
+    (block inputs) and the position embeddings added into it."""
     x = x if x.ndim == 3 else x[None]
     if x.shape[-2] > rows:
         raise ValueError(f"{x.shape[-2]} rows do not fit the padded length {rows}")
@@ -187,7 +188,7 @@ def sp_shard(x: torch.Tensor, mesh_device, sp_axis: int | None, rows: int) -> tt
         dims = [None, None]
         dims[sp_axis] = 2
         mapper = ttnn.ShardTensor2dMesh(mesh_device, mesh_shape=tuple(mesh_device.shape), dims=dims)
-    return ttnn.from_torch(padded, device=mesh_device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT, mesh_mapper=mapper)
+    return ttnn.from_torch(padded, device=mesh_device, dtype=dtype, layout=ttnn.TILE_LAYOUT, mesh_mapper=mapper)
 
 
 def sp_gather(x: ttnn.Tensor, mesh_device, sp_axis: int | None, logical_n: int) -> torch.Tensor:

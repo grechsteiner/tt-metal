@@ -15,6 +15,7 @@ Each image's patches are put in window order (each 2x2 merge window's four patch
 padded to 65,536 rows and split along the ring, so the merger is a reshape on each chip. Attention is
 ring attention with the padding masked; norms, MLP, merger and projector are sequence parallel.
 Weights are bf16 and replicated, activations DRAM interleaved, matmuls HiFi4 with fp32 accumulation.
+Activations are bf16 except the encoder's residual stream, which is fp32 (`tt/vision_block.py`).
 
 ## Structure
 
