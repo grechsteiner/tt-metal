@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device: `TT_Vision_Attention` (ring attention over the 1x4 mesh) against the reference
+"""Device: `TT_Vision_Attention` (ring attention over the 4-chip ring) against the reference
 `blocks[layer].attention_qkvpacked`. The device runs window-ordered rows; the output is put back in
 raster order to compare."""
 

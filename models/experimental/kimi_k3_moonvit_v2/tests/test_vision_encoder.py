@@ -2,8 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device: `TT_Patch_Embed` then `TT_MoonViT_Encoder` (ring attention over the 1x4 mesh) against the
-reference `vision_tower.patch_embed` then `vision_tower.encoder`, first TEST_LAYERS layers.
+"""Device: `TT_Patch_Embed` then `TT_MoonViT_Encoder` (ring attention over the 4-chip ring)
+against the reference `vision_tower.patch_embed` then `vision_tower.encoder`, first TEST_LAYERS
+layers.
 
 Covers the encoder without the patch merger and projector. The inputs come from
 `host_prep.prepare_host_inputs`, as in the full model: window order, padded to `max_patches`. The

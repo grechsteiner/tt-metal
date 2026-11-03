@@ -8,11 +8,13 @@ Scope: one still image per call. No packing, no video. The encoder takes 14x14 p
 merger turns each 2x2 window into one 28 px token, and the projector maps it to a language-model
 embedding.
 
-Target layout: the 4 Blackhole chips of a QuietBox 2 in a ring along mesh axis 1 (`(1, 4)` mesh, `FABRIC_1D_RING`,
-2 links). Each image's patches are put in window order (each 2x2 merge window's four patches
-consecutive), padded to 65,536 rows and split along the ring, so the merger is a reshape on each chip. Attention is
-ring attention with the padding masked; norms, MLP, merger and projector are sequence parallel. Weights are bf16 and
-replicated, activations DRAM interleaved, matmuls HiFi4 with fp32 accumulation.
+Target layout: 4 Blackhole chips in a ring along mesh axis 1 (`(1, 4)` mesh, 2 links). On a LoudBox
+(8 chips, 2x4) that is one row; the tests open all 8 chips and run on the first row
+(`tests/conftest.py`), with `FABRIC_2D_TORUS_X`.
+Each image's patches are put in window order (each 2x2 merge window's four patches consecutive),
+padded to 65,536 rows and split along the ring, so the merger is a reshape on each chip. Attention is
+ring attention with the padding masked; norms, MLP, merger and projector are sequence parallel.
+Weights are bf16 and replicated, activations DRAM interleaved, matmuls HiFi4 with fp32 accumulation.
 
 ## Structure
 
@@ -76,7 +78,7 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_load_checkpoint.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_module.py
 
-# Device, one P150 or 4 Blackhole chips: parts that work on each row alone
+# Device, one P150 or a LoudBox: parts that work on each row alone
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rms_norm.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rope.py \
@@ -85,7 +87,7 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_patch_merger.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_projector.py
 
-# Device, 4 Blackhole chips: attention needs the ring
+# Device, a LoudBox: attention needs the ring
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_vision_attention.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_block.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_encoder.py \
@@ -103,7 +105,7 @@ length. Each size has one grid per mesh: `full` (256x256 on the ring, 128x128 on
 inside a tile, and `small` (40x100) is almost all padding. Attention, the block, the encoder and the
 full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU golden builds L x L scores per head.
 
-Full size (`test_full_size.py`, 4 Blackhole chips, checkpoint only): a 256x256 image fills all 65,536
+Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536
 rows, and each encoder layer on its own and the full 27-layer encoder are compared against reference
 outputs saved once by `tests/goldens.py`. They are fp32, with attention computed in chunks of query
 rows (~1.5 min and ~25 GB of RAM per layer, about 45 min for all 27): the bf16 reference rounds more

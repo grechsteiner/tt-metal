@@ -72,24 +72,27 @@ ATTENTION_GRIDS = pytest.mark.parametrize("grid", [[(1, 64, 64)], [(1, 40, 100)]
 #   partial:  nearly full; the real rows end inside a tile (not a multiple of 32)
 #   small:    a small image, almost all padding
 ROW_GRID_SIZES = {
-    "full": {"ring1x4": (256, 256), "p150": (128, 128)},
-    "max_side": {"ring1x4": (512, 128), "p150": (512, 32)},
-    "partial": {"ring1x4": (250, 250), "p150": (122, 130)},
-    "small": {"ring1x4": (40, 100), "p150": (40, 100)},
+    "full": {"ring": (256, 256), "p150": (128, 128)},
+    "max_side": {"ring": (512, 128), "p150": (512, 32)},
+    "partial": {"ring": (250, 250), "p150": (122, 130)},
+    "small": {"ring": (40, 100), "p150": (40, 100)},
 }
 ROW_GRIDS = pytest.mark.parametrize("size", list(ROW_GRID_SIZES))
 
 
 def row_grid(size: str, sp_axis: int | None) -> list[tuple[int, int, int]]:
-    """The `size` grid for the mesh under test: `ring1x4` when the sequence is split, else `p150`."""
-    h, w = ROW_GRID_SIZES[size]["p150" if sp_axis is None else "ring1x4"]
+    """The `size` grid for the mesh under test: `ring` when the sequence is split, else `p150`."""
+    h, w = ROW_GRID_SIZES[size]["p150" if sp_axis is None else "ring"]
     return [(1, h, w)]
 
 
-# The 4 Blackhole chips of a QuietBox 2 in a ring along mesh axis 1 (the (1, 4) mesh other QB2 models
-# open), 2 links between neighbours.
+# The ring: 4 Blackhole chips along mesh axis 1, 2 links between neighbours. On a LoudBox (8 chips,
+# 2x4 mesh, torus links along the 4-long axis) it is the first row: `mesh_device` in conftest.py
+# opens all 8 chips and hands the test that row. `FABRIC_2D_TORUS_X` because `FABRIC_1D_RING` cannot
+# route the ring's wraparound link there.
 RING_SIZE = 4
-RING4 = pytest.param((1, RING_SIZE), 1, 2, {"fabric_config": ttnn.FabricConfig.FABRIC_1D_RING}, id="ring1x4")
+LOUDBOX_SHAPE = (2, RING_SIZE)
+RING4 = pytest.param((1, RING_SIZE), 1, 2, {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}, id="ring1x4")
 # One P150 standing in for one chip of that ring: it gets the first quarter of the padded sequence
 # (`device_config`).
 P150 = pytest.param((1, 1), None, 1, {}, id="p150")

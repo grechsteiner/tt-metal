@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device, 4 Blackhole chips: full-size (256x256, all 65,536 padded rows real) encoder layers, each on
+"""Device, the 4-chip ring (one LoudBox row): full-size (256x256, all 65,536 padded rows real) encoder layers, each on
 its own, and the full 27-layer encoder against reference outputs saved by `goldens.py`, real weights
 only.
 
