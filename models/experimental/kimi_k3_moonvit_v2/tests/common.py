@@ -14,7 +14,8 @@ import torch
 from loguru import logger
 
 import ttnn
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import MoonViTConfig
+from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 from models.common.utility_functions import comp_pcc
 from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
 
@@ -66,24 +67,18 @@ GRIDS = {
 ATTENTION_GRIDS = pytest.mark.parametrize("grid", [[(1, 64, 64)], [(1, 40, 100)]], ids=["64x64", "40x100"])
 
 # Device grids for the parts that work on each row alone (everything but attention). Their CPU golden
-# grows only with the row count, so it runs at the full padded length in seconds. Each size names one
-# (h, w) per mesh, since one P150 runs a quarter of the ring's rows (`device_config`):
+# grows only with the row count, so it runs at the full padded length in seconds. Both meshes run the
+# same image; one P150 runs one ring chip's quarter of it (`MeshRows`):
 #   full:     fills the padded length exactly; real rows on every ring chip, no padding
 #   max_side: also fills it, with the longest side the processor allows (512)
-#   partial:  nearly full; the real rows end inside a tile (not a multiple of 32)
-#   small:    a small image, almost all padding
-ROW_GRID_SIZES = {
-    "full": {"ring": (256, 256), "p150": (128, 128)},
-    "max_side": {"ring": (512, 128), "p150": (512, 32)},
-    "partial": {"ring": (250, 250), "p150": (122, 130)},
-    "small": {"ring": (40, 100), "p150": (40, 100)},
-}
+#   partial:  nearly full; the real rows end inside a tile (not a multiple of 32) on the last chip
+#   small:    a small image, almost all padding; every real row is on the first chip
+ROW_GRID_SIZES = {"full": (256, 256), "max_side": (512, 128), "partial": (250, 250), "small": (40, 100)}
 ROW_GRIDS = pytest.mark.parametrize("size", list(ROW_GRID_SIZES))
 
 
-def row_grid(size: str, sp_axis: int | None) -> list[tuple[int, int, int]]:
-    """The `size` grid for the mesh under test: `ring` when the sequence is split, else `p150`."""
-    h, w = ROW_GRID_SIZES[size]["p150" if sp_axis is None else "ring"]
+def row_grid(size: str) -> list[tuple[int, int, int]]:
+    h, w = ROW_GRID_SIZES[size]
     return [(1, h, w)]
 
 
@@ -91,11 +86,10 @@ def row_grid(size: str, sp_axis: int | None) -> list[tuple[int, int, int]]:
 # 2x4 mesh, torus links along the 4-long axis) it is the first row: `mesh_device` in conftest.py
 # opens all 8 chips and hands the test that row. `FABRIC_2D_TORUS_X` because `FABRIC_1D_RING` cannot
 # route the ring's wraparound link there.
-RING_SIZE = 4
 LOUDBOX_SHAPE = (2, RING_SIZE)
 RING4 = pytest.param((1, RING_SIZE), 1, 2, {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}, id="ring1x4")
-# One P150 standing in for one chip of that ring: it gets the first quarter of the padded sequence
-# (`device_config`).
+# One P150 standing in for one chip of that ring: it runs that chip's quarter of the padded sequence
+# (`device_config`, `MeshRows`), never the whole of it.
 P150 = pytest.param((1, 1), None, 1, {}, id="p150")
 
 
@@ -115,18 +109,20 @@ NOT_WRITTEN = pytest.mark.xfail(raises=NotImplementedError, strict=True, reason=
 
 # ttsim (TT_METAL_SIMULATOR) simulates one chip at about 1/100 of silicon speed. The ROW_GRIDS cases pad
 # to 16,384 rows per chip, so they skip there; each row-wise part also has a SIMULATOR_GRID case on one
-# chip, padded to SIMULATOR_ROWS, with random weights.
+# chip, with random weights: the chip's quarter of a ring padded to SIMULATOR_ROWS, 128 rows.
 ON_SIMULATOR = bool(os.environ.get("TT_METAL_SIMULATOR"))
 NOT_ON_SIMULATOR = pytest.mark.skipif(ON_SIMULATOR, reason="full padded length is too slow on ttsim")
 SINGLE_CHIP = mesh_params(P150)
-SIMULATOR_ROWS = 128
-# 120 rows: the real rows end inside the last tile, and the padding fills one more.
+SIMULATOR_ROWS = 512
+# 120 rows, all in the first chip's quarter: the real rows end inside a tile, padding after them.
 SIMULATOR_GRID = [(1, 6, 20)]
 
 
 def device_config(config: MoonViTConfig, sp_axis: int | None) -> MoonViTConfig:
-    """The config a test builds with. On one P150 (`sp_axis` None) the padded length is one ring
-    chip's share, `max_patches / RING_SIZE` rows, so the chip sees the shapes a ring chip sees."""
+    """The config the TT modules build with. On one P150 (`sp_axis` None) the padded length is one ring
+    chip's share, `max_patches / RING_SIZE` rows, so the chip sees the shapes a ring chip sees. Host
+    prep and `check_grid` keep the full config: the input is the ring's, and `MeshRows` cuts the
+    chip's quarter from it."""
     if sp_axis is not None:
         return config
     return dataclasses.replace(config, max_patches=config.max_patches // RING_SIZE)
@@ -256,3 +252,55 @@ def sp_gather(x: ttnn.Tensor, mesh_device, sp_axis: int | None, logical_n: int) 
         composer = ttnn.ConcatMesh2dToTensor(mesh_device, mesh_shape=tuple(mesh_device.shape), dims=dims)
     out = ttnn.to_torch(x, mesh_composer=composer)[0, :, :logical_n]
     return out[0] if out.shape[0] == 1 else out
+
+
+@dataclasses.dataclass(frozen=True)
+class MeshRows:
+    """The rows of one padded sequence that the mesh under test holds: `n` real rows padded to `rows`,
+    the ring's length, in the order the ring splits them (window order for patches in the model).
+
+    On the ring (`sp_axis` set) that is every row. On one chip (`sp_axis` None) it is one ring chip's
+    quarter, `rows // RING_SIZE` rows: the last chip that holds real rows, so the quarter has real rows
+    and, unless the image fills the padded length, the padding after them, as that ring chip has.
+
+    Host tensors have their rows on dim 0, real (`n`) or already padded (`rows`).
+    """
+
+    n: int
+    rows: int
+    sp_axis: int | None
+
+    @property
+    def share(self) -> int:
+        """Padded rows on the mesh."""
+        return self.rows if self.sp_axis is not None else self.rows // RING_SIZE
+
+    @property
+    def start(self) -> int:
+        """The first padded row on the mesh."""
+        if self.sp_axis is not None:
+            return 0
+        return min((self.n - 1) // self.share, RING_SIZE - 1) * self.share
+
+    @property
+    def real(self) -> slice:
+        """The real rows on the mesh."""
+        return slice(self.start, min(self.start + self.share, self.n))
+
+    def take(self, x: torch.Tensor) -> torch.Tensor:
+        """The real rows on the mesh: the rows of a golden to compare with `gather`."""
+        return x[self.real]
+
+    def held(self, x: torch.Tensor) -> torch.Tensor:
+        """`x` zero-padded to `rows`, then the `share` rows on the mesh."""
+        return host_prep.pad_rows(x, self.rows)[self.start : self.start + self.share]
+
+    def shard(self, x: torch.Tensor, mesh_device, dtype=ttnn.bfloat16) -> ttnn.Tensor:
+        """(L, C) or (L, H, C) on the host -> the mesh's rows on device, [1, 1 or H, share/sp, C]."""
+        x = self.held(x)
+        return sp_shard(x if x.ndim == 2 else x.transpose(0, 1), mesh_device, self.sp_axis, self.share, dtype)
+
+    def gather(self, x: ttnn.Tensor, mesh_device) -> torch.Tensor:
+        """The inverse of `shard` with the padding dropped: -> (real rows, C) or (real rows, H, C)."""
+        out = sp_gather(x, mesh_device, self.sp_axis, self.real.stop - self.real.start)
+        return out if out.ndim == 2 else out.transpose(0, 1)
