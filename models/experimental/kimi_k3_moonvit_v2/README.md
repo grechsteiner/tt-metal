@@ -61,8 +61,8 @@ out = tt_model.run(pixel_values, grid_thws)  # (h*w, 3, 14, 14), [[1, h, w]] -> 
 Image limit: an image is accepted when the HF processor's grid fits `max_patches` (65,536 patches).
 That rejects nearly every image over about 12.8 MP, and some smaller ones that the 28 px padding
 pushes over (3590x3590 -> 258x258). Over-limit images are rejected, never shrunk, because shrinking
-would diverge from HF. Images with transparency do not match HF: alpha is dropped instead of
-composited onto HF's chessboard (`host_padding_plan.md`, D4).
+would diverge from HF. Only RGB images are accepted; other modes (including anything with
+transparency, which HF composites onto a chessboard) raise `ValueError`.
 
 ## Weights
 

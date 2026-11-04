@@ -9,10 +9,10 @@ This is layer 1 of the padding: the image is padded with black on the bottom and
 of `merge_kernel_size * patch_size` (28 px), and after normalization that black is -1.0. Those pad
 patches are real tokens. Layer 2, the zero rows up to `max_patches`, is `host_prep.prepare_host_inputs`.
 
-One departure from HF: alpha is dropped with `convert("RGB")` instead of being composited onto a
-chessboard, so images with transparency do not match HF. Images over `config.max_patches` are
-rejected before the resize, never shrunk to fit. `tests/test_image_prep.py` checks everything
-else bit for bit against the HF copy.
+Only RGB images are accepted; every other mode is rejected rather than converted, so transparency
+(which HF composites onto a chessboard) is never silently dropped. Images over `config.max_patches`
+are rejected before the resize, never shrunk to fit. `tests/test_image_prep.py` checks the rest bit
+for bit against the HF copy.
 """
 
 from __future__ import annotations
@@ -54,7 +54,13 @@ def resize_plan(width: int, height: int, config: MoonViTConfig) -> ResizePlan:
 
 
 def image_to_patches(image: Image.Image, config: MoonViTConfig) -> tuple[torch.Tensor, torch.Tensor]:
-    """A PIL image -> `pixel_values` (h*w, 3, p, p) float32 in raster order and `grid_thws` [[1, h, w]] int64."""
+    """An RGB PIL image -> `pixel_values` (h*w, 3, p, p) float32 in raster order and `grid_thws` [[1, h, w]] int64.
+
+    Other modes are rejected: convert them to RGB first, knowing that HF composites alpha onto a chessboard
+    and converts after the resize, so a converted image matches HF only if it had no alpha and isn't resized.
+    """
+    if image.mode != "RGB":
+        raise ValueError(f"image mode {image.mode!r} is not supported, only 'RGB'")
     plan = resize_plan(*image.size, config)
     grid_thws = torch.tensor([[1, plan.grid_h, plan.grid_w]], dtype=torch.int64)
     try:
@@ -62,10 +68,7 @@ def image_to_patches(image: Image.Image, config: MoonViTConfig) -> tuple[torch.T
     except ValueError as e:
         raise ValueError(f"image {image.width}x{image.height}: {e}") from e
 
-    # Resize in the original mode (Pillow uses nearest for P and 1), and only then drop to RGB.
     image = image.resize((plan.new_w, plan.new_h), resample=Image.Resampling.BICUBIC)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
     pixels = np.pad(np.asarray(image), ((0, plan.pad_h), (0, plan.pad_w), (0, 0)))
     x = (torch.from_numpy(pixels).float() / 255 - IMAGE_MEAN) / IMAGE_STD
 

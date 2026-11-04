@@ -38,13 +38,9 @@ def hf_preprocess(processor: KimiK3VisionProcessor, image: Image.Image) -> tuple
     return out["pixel_values"], out["grid_thws"]
 
 
-def random_image(mode: str, width: int, height: int, seed: int = 0) -> Image.Image:
+def random_image(width: int, height: int, seed: int = 0) -> Image.Image:
     rng = np.random.default_rng(seed)
-    bytes_per_row = {"1": (width + 7) // 8, "L": width, "P": width, "I;16": 2 * width, "RGB": 3 * width}
-    image = Image.frombytes(mode, (width, height), rng.bytes(bytes_per_row.get(mode, 4 * width) * height))
-    if mode == "P":
-        image.putpalette(rng.bytes(768))
-    return image
+    return Image.frombytes("RGB", (width, height), rng.bytes(3 * width * height))
 
 
 def hf_plan(width: int, height: int, cfg: dict) -> image_prep.ResizePlan:
@@ -117,14 +113,25 @@ def test_accepts_under_limit(config, size):
     assert pixel_values.shape == (h * w, 3, config.patch_size, config.patch_size)
 
 
-MODES = ("RGB", "L", "P", "1", "CMYK", "I;16")
-SIZES = ((1, 1), (35, 35), (100, 57), (1920, 1080), (8000, 300), (300, 8000))
-CASES = [(m, s) for m in MODES for s in SIZES] + [("RGB", (4662, 4662))]
+NON_RGB_MODES = ("RGBA", "LA", "PA", "L", "P", "1", "CMYK", "I;16")
 
 
-@pytest.mark.parametrize("mode, size", CASES, ids=[f"{m}-{w}x{h}" for m, (w, h) in CASES])
-def test_image_to_patches_matches_hf(config, processor, mode, size):
-    image = random_image(mode, *size)
+@pytest.mark.parametrize("mode", NON_RGB_MODES)
+def test_rejects_non_rgb(config, expect_error, monkeypatch, mode):
+    def no_resize(*args, **kwargs):
+        raise AssertionError("the mode check must come before the resize")
+
+    monkeypatch.setattr(Image.Image, "resize", no_resize)
+    with expect_error(ValueError, f"image mode '{mode}' is not supported"):
+        image_prep.image_to_patches(Image.new(mode, (35, 35)), config)
+
+
+SIZES = ((1, 1), (35, 35), (100, 57), (1920, 1080), (8000, 300), (300, 8000), (4662, 4662))
+
+
+@pytest.mark.parametrize("size", SIZES, ids=[f"{w}x{h}" for w, h in SIZES])
+def test_image_to_patches_matches_hf(config, processor, size):
+    image = random_image(*size)
     pixel_values, grid_thws = image_prep.image_to_patches(image, config)
     hf_pixel_values, hf_grid_thws = hf_preprocess(processor, image)
     assert grid_thws.dtype == hf_grid_thws.dtype and torch.equal(grid_thws, hf_grid_thws)
@@ -133,7 +140,7 @@ def test_image_to_patches_matches_hf(config, processor, mode, size):
 
 def test_padding_is_black(config):
     """35x35 is padded to 56x56: patches 0 and 1 of each side are real, 2 is half pad, 3 is all pad."""
-    image = random_image("RGB", 35, 35)
+    image = random_image(35, 35)
     pixel_values, grid_thws = image_prep.image_to_patches(image, config)
 
     padded = np.pad(np.asarray(image), ((0, 21), (0, 21), (0, 0)), constant_values=0)
@@ -150,22 +157,6 @@ def test_padding_is_black(config):
     assert (grid[:2, :2] > -1.0).any()
 
 
-def test_alpha_is_dropped(config, processor):
-    small = random_image("RGBA", 35, 35)
-    pixel_values, _ = image_prep.image_to_patches(small, config)
-    assert torch.equal(pixel_values, image_prep.image_to_patches(small.convert("RGB"), config)[0])
-    # The deliberate departure from HF, which composites alpha onto a chessboard.
-    assert not torch.equal(pixel_values, hf_preprocess(processor, small)[0])
-
-    # Resized: Pillow resizes RGBA with premultiplied alpha, and alpha is dropped after that.
-    large = random_image("RGBA", 8000, 300)
-    plan = image_prep.resize_plan(*large.size, config)
-    resized = large.resize((plan.new_w, plan.new_h), resample=Image.Resampling.BICUBIC).convert("RGB")
-    pixel_values, _ = image_prep.image_to_patches(large, config)
-    assert torch.equal(pixel_values, image_prep.image_to_patches(resized, config)[0])
-    assert not torch.equal(pixel_values, image_prep.image_to_patches(large.convert("RGB"), config)[0])
-
-
 def test_preprocessor_defaults(config, media_proc_cfg):
     assert config.in_patch_limit == media_proc_cfg["in_patch_limit"]
     assert config.patch_size == media_proc_cfg["patch_size"]
@@ -177,7 +168,7 @@ def test_preprocessor_defaults(config, media_proc_cfg):
 
 
 def test_prepare_host_inputs_from_image(config):
-    pixel_values, grid_thws = image_prep.image_to_patches(random_image("RGB", 35, 35), config)
+    pixel_values, grid_thws = image_prep.image_to_patches(random_image(35, 35), config)
     pos_emb_weight = torch.randn(config.init_pos_emb_height, config.init_pos_emb_width, config.hidden_size)
     inputs = host_prep.prepare_host_inputs(config, pos_emb_weight, pixel_values, grid_thws)
     n = inputs["logical_n"]
