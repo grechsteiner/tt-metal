@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import time
 
 import pytest
 import torch
@@ -87,7 +88,8 @@ def row_grid(size: str) -> list[tuple[int, int, int]]:
 # opens all 8 chips and hands the test that row. `FABRIC_2D_TORUS_X` because `FABRIC_1D_RING` cannot
 # route the ring's wraparound link there.
 LOUDBOX_SHAPE = (2, RING_SIZE)
-RING4 = pytest.param((1, RING_SIZE), 1, 2, {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}, id="ring1x4")
+RING_FABRIC = {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}
+RING4 = pytest.param((1, RING_SIZE), 1, 2, RING_FABRIC, id="ring1x4")
 # One P150 standing in for one chip of that ring: it runs that chip's quarter of the padded sequence
 # (`device_config`, `MeshRows`), never the whole of it.
 P150 = pytest.param((1, 1), None, 1, {}, id="p150")
@@ -104,6 +106,15 @@ def mesh_params(*params):
 # Attention needs the ring. Parts that work on each row alone also run on one P150.
 RING = mesh_params(RING4)
 P150_AND_RING = mesh_params(P150, RING4)
+
+# Traced tests (`Trace`): the ring with DRAM set aside for the captured commands.
+TRACE_REGION_SIZE = 100_000_000
+RING_TRACE = mesh_params(
+    pytest.param((1, RING_SIZE), 1, 2, {**RING_FABRIC, "trace_region_size": TRACE_REGION_SIZE}, id="ring1x4")
+)
+# Untimed replays, then timed ones (`Trace.time_replays`).
+TRACE_WARMUP = 2
+TRACE_ITERATIONS = 10
 
 NOT_WRITTEN = pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="ttnn forward not written yet")
 
@@ -304,3 +315,63 @@ class MeshRows:
         """The inverse of `shard` with the padding dropped: -> (real rows, C) or (real rows, H, C)."""
         out = sp_gather(x, mesh_device, self.sp_axis, self.real.stop - self.real.start)
         return out if out.ndim == 2 else out.transpose(0, 1)
+
+
+class Trace:
+    """One captured trace of `forward()`, replayed on command queue 0.
+
+    `forward` must read only inputs that keep their address (tensors kept alive, or `DeviceInput`s),
+    and must have run once untraced first: that compiles its programs and allocates the ring attention
+    semaphores and buffers, which cannot happen inside a capture. Every replay writes `output`. Use it
+    as a context manager, so the trace is released when a check fails.
+    """
+
+    def __init__(self, mesh_device, forward) -> None:
+        self.mesh_device = mesh_device
+        self.trace_id = ttnn.begin_trace_capture(mesh_device, cq_id=0)
+        try:
+            self.output = forward()
+        except BaseException:
+            ttnn.end_trace_capture(mesh_device, self.trace_id, cq_id=0)
+            ttnn.release_trace(mesh_device, self.trace_id)
+            raise
+        ttnn.end_trace_capture(mesh_device, self.trace_id, cq_id=0)
+        ttnn.synchronize_device(mesh_device)
+
+    def __enter__(self) -> "Trace":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        ttnn.release_trace(self.mesh_device, self.trace_id)
+
+    def _execute(self) -> None:
+        ttnn.execute_trace(self.mesh_device, self.trace_id, cq_id=0, blocking=False)
+
+    def replay(self) -> ttnn.Tensor:
+        """Run once on the current inputs and wait for it; returns `output`."""
+        self._execute()
+        ttnn.synchronize_device(self.mesh_device)
+        return self.output
+
+    def time_replays(self, label: str, iterations: int = TRACE_ITERATIONS, warmup: int = TRACE_WARMUP) -> float:
+        """Seconds per replay on the current inputs: `warmup` untimed replays, then `iterations` back to
+        back with one wait for the device at the end, so that wait is spread over all of them (as the
+        CCL perf tests time their traces). Nothing is written or read in between. Logged, not asserted."""
+        for _ in range(warmup):
+            self._execute()
+        ttnn.synchronize_device(self.mesh_device)
+        start = time.perf_counter()
+        for _ in range(iterations):
+            self._execute()
+        ttnn.synchronize_device(self.mesh_device)
+        seconds = (time.perf_counter() - start) / iterations
+        logger.info(f"{label}: {seconds * 1e3:.3f} ms per traced replay ({iterations} replays)")
+        return seconds
+
+
+def assert_same_as_untraced(untraced: torch.Tensor, traced: torch.Tensor, label: str = "") -> None:
+    """A replay runs the same programs on the same inputs as the untraced run, so it must match it
+    exactly."""
+    assert torch.equal(
+        untraced, traced
+    ), f"{label}: traced output differs from the untraced run ({format_quality(quality(untraced, traced))})"
