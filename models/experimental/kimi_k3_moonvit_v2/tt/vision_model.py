@@ -121,7 +121,13 @@ class TT_MoonViT_Vision_Model(Module):
         self.mm_projector = TT_Projector(config, mesh_device=mesh_device, compute_kernel_config=ckc)
         sp_axis = self.parallel.sp_axis
         rows = config.max_patches
-        self.patches = DeviceInput((1, 1, rows, config.padded_patch_dim), mesh_device=mesh_device, sp_axis=sp_axis)
+        # Row major: the patch embed tiles it on device (patch_embed.py).
+        self.patches = DeviceInput(
+            (1, 1, rows, config.padded_patch_dim),
+            mesh_device=mesh_device,
+            sp_axis=sp_axis,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+        )
         # fp32: added into the fp32 residual stream (patch_embed.py).
         self.pos_emb = DeviceInput(
             (1, 1, rows, config.hidden_size), mesh_device=mesh_device, sp_axis=sp_axis, dtype=ttnn.float32
