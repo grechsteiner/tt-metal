@@ -14,13 +14,19 @@ import pytest
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import eager_attention
-from models.experimental.kimi_k3_moonvit_v2.tests.common import SHALLOW_REFERENCE, random_patches, random_tensor
+from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SHALLOW_REFERENCE,
+    random_patches,
+    random_tensor,
+    reference_rope,
+)
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import (
     NORM_EPS,
     chunked_attention,
     encoder_steps,
     to_fp32,
     use_chunked_attention,
+    use_sampled_attention,
 )
 
 
@@ -76,3 +82,28 @@ def test_fp32_chunked_encoder_matches_eager(shallow_config, shallow_reference):
         with use_chunked_attention():
             actual = dict(encoder_steps(reference, x, grid_thws))["final_layernorm"]
     torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+
+@SHALLOW_REFERENCE
+def test_sampled_attention_matches_eager(shallow_config, shallow_reference):
+    """A block run with `use_sampled_attention`, as the full-length device tests build their golden,
+    equals the same fp32 block with upstream eager attention on the sampled rows, over several query
+    chunks; the rows not sampled are left out of the attention."""
+    reference = to_fp32(copy.deepcopy(shallow_reference))
+    block = reference.vision_tower.encoder.blocks[0]
+    grid_thws = torch.tensor([(1, 40, 52)])
+    n = 40 * 52
+    x = random_tensor(n, shallow_config.hidden_size, dtype=torch.float32)
+    cu_seqlens, max_seqlen, rope_freqs_cis = reference_rope(reference, grid_thws)
+    rows = torch.cat([torch.arange(0, 300), torch.arange(1000, 1100), torch.arange(n - 50, n)])
+    others = torch.ones(n, dtype=torch.bool)
+    others[rows] = False
+    with torch.no_grad():
+        expected_attention = block.attention_qkvpacked(x, cu_seqlens, max_seqlen, rope_freqs_cis)
+        expected = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=rope_freqs_cis)
+        with use_sampled_attention(rows):
+            attention = block.attention_qkvpacked(x, cu_seqlens, max_seqlen, rope_freqs_cis)
+            actual = block(x, cu_seqlens, max_seqlen, rope_freqs_cis=rope_freqs_cis)
+    torch.testing.assert_close(attention[rows], expected_attention[rows], rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(actual[rows], expected[rows], rtol=1e-5, atol=1e-5)
+    assert not torch.allclose(attention[others], expected_attention[others])

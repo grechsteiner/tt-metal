@@ -84,6 +84,55 @@ def row_grid(size: str) -> list[tuple[int, int, int]]:
     return [(1, h, w)]
 
 
+# Full-length attention and block tests: the ring runs the production padded length (`max_patches`)
+# on a ROW_GRID_SIZES image with real rows on every chip. The CPU golden at that length is too slow for
+# every query row, so it computes SAMPLED_ROWS_PER_CHIP query rows of each chip, each against every key
+# (`goldens.use_sampled_attention`), and each chip's rows are checked on their own.
+FULL_LENGTH_GRIDS = pytest.mark.parametrize("size", ["full", "max_side", "partial"])
+SAMPLED_ROWS_PER_CHIP = 256
+
+
+def sampled_rows(n: int, rows: int, per_chip: int = SAMPLED_ROWS_PER_CHIP, seed: int = 0) -> list[torch.Tensor]:
+    """Per ring chip, sorted window-order indices of `per_chip` of the real rows it holds, for `n` real
+    rows padded to `rows`: its first and last `per_chip // 4` real rows (where the image ends inside a
+    tile on the last chip, the rows before the padding) and the rest drawn between them. A chip with
+    fewer real rows gives all of them; one with none, an empty tensor."""
+    share = rows // RING_SIZE
+    edge = per_chip // 4
+    generator = torch.Generator().manual_seed(seed)
+    chips = []
+    for chip in range(RING_SIZE):
+        real = torch.arange(chip * share, min((chip + 1) * share, n))
+        if len(real) <= per_chip:
+            chips.append(real)
+            continue
+        middle = real[edge:-edge]
+        drawn = middle[torch.randperm(len(middle), generator=generator)[: per_chip - 2 * edge]]
+        chips.append(torch.cat([real[:edge], drawn, real[-edge:]]).sort().values)
+    return chips
+
+
+def assert_quality_per_chip(
+    golden: torch.Tensor,
+    actual: torch.Tensor,
+    chips: list[torch.Tensor],
+    pcc: float = 0.99,
+    relative_rmse: float | None = None,
+    label: str = "",
+) -> None:
+    """`assert_quality` on each chip's rows (`chips`, as `sampled_rows` gives them) of `golden` and
+    `actual`, both window order. Every chip is checked and logged before any failure is raised, so a
+    wrong chip cannot hide behind three right ones."""
+    label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
+    failed = []
+    for chip, rows in enumerate(chips):
+        assert len(rows), f"{label}: chip {chip} holds no real rows"
+        q = quality(golden[rows], actual[rows])
+        logger.info(f"{label} chip {chip} ({len(rows)} rows): {format_quality(q)}")
+        failed += [f"chip {chip} {failure}" for failure in quality_failures(q, pcc, relative_rmse)]
+    assert not failed, f"{label}: {failed}"
+
+
 # The ring: 4 Blackhole chips along mesh axis 1, 2 links between neighbours. On a LoudBox (8 chips,
 # 2x4 mesh, torus links along the 4-long axis) it is the first row: `mesh_device` in conftest.py
 # opens all 8 chips and hands the test that row. `FABRIC_2D_TORUS_X` because `FABRIC_1D_RING` cannot
@@ -172,6 +221,7 @@ def quality(golden: torch.Tensor, actual: torch.Tensor) -> dict[str, float]:
     - `ccc`: concordance correlation, PCC lowered by any scale or offset difference.
     - `max_abs`, `max_rel`: the largest element differences (as `comp_allclose` reports them; `max_rel`
       over nonzero golden values), for diagnosis.
+    - `nonfinite`: NaN and Inf values in `actual`. `comp_pcc` sets them to zero, so PCC alone misses a few.
     """
     golden, actual = golden.float(), actual.float()
     _, pcc = comp_pcc(golden, actual, 0.0)
@@ -184,18 +234,28 @@ def quality(golden: torch.Tensor, actual: torch.Tensor) -> dict[str, float]:
     nonzero = golden != 0
     max_rel = (diff[nonzero] / golden[nonzero].abs()).max().item() if nonzero.any() else 0.0
     max_abs = diff.max().item()
-    return {"pcc": pcc, "relative_rmse": relative_rmse, "ccc": ccc, "max_abs": max_abs, "max_rel": max_rel}
+    nonfinite = int((~torch.isfinite(actual)).sum())
+    return {
+        "pcc": pcc,
+        "relative_rmse": relative_rmse,
+        "ccc": ccc,
+        "max_abs": max_abs,
+        "max_rel": max_rel,
+        "nonfinite": nonfinite,
+    }
 
 
 def format_quality(q: dict[str, float]) -> str:
     return (
         f"PCC {q['pcc']:.6f}, relative RMSE {q['relative_rmse']:.2%}, CCC {q['ccc']:.6f}, "
-        f"max abs {q['max_abs']:.3g}, max rel {q['max_rel']:.3g}"
+        f"max abs {q['max_abs']:.3g}, max rel {q['max_rel']:.3g}, {q['nonfinite']} NaN or Inf"
     )
 
 
 def quality_failures(q: dict[str, float], pcc: float, relative_rmse: float | None) -> list[str]:
     failures = []
+    if q["nonfinite"]:
+        failures.append(f"{q['nonfinite']} NaN or Inf values")
     if not q["pcc"] >= pcc:
         failures.append(f"PCC {q['pcc']:.6f} < {pcc}")
     if relative_rmse is not None and not q["relative_rmse"] <= relative_rmse:
@@ -206,7 +266,7 @@ def quality_failures(q: dict[str, float], pcc: float, relative_rmse: float | Non
 def assert_quality(
     golden: torch.Tensor, actual: torch.Tensor, pcc: float = 0.99, relative_rmse: float | None = None, label: str = ""
 ) -> dict[str, float]:
-    """Assert PCC >= `pcc` and relative RMSE <= `relative_rmse`; log every `quality` measure.
+    """Assert no NaN or Inf, PCC >= `pcc` and relative RMSE <= `relative_rmse`; log every `quality` measure.
 
     Thresholds follow tt_dit's `assert_quality` (PCC plus relative RMSE); CCC and the largest element
     differences are logged, not asserted. Each test's relative RMSE limit is about twice the largest

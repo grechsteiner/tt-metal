@@ -22,8 +22,15 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     device_config,
     random_patches,
     row_grid,
+    sampled_rows,
+    FULL_LENGTH_GRIDS,
 )
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import MoonViTConfig, check_grid, resolve_parallel
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
+    RING_SIZE,
+    MoonViTConfig,
+    check_grid,
+    resolve_parallel,
+)
 
 REFERENCE_CONFIG = Path(__file__).parents[1] / "reference" / "config.json"
 
@@ -137,3 +144,22 @@ def test_one_device_runs_at_most_a_ring_chips_share(config, expect_error):
     resolve_parallel(None, None, None, device_config(config, None))
     with expect_error(ValueError, "one ring chip's share"):
         resolve_parallel(None, None, None, config)
+
+
+@FULL_LENGTH_GRIDS
+def test_full_length_sampled_rows(config, size):
+    """The full-length grids put real rows on every ring chip, and `sampled_rows` takes
+    SAMPLED_ROWS_PER_CHIP distinct real rows of each chip, its first and last real rows among them (on
+    `partial`, the last chip's end inside a tile)."""
+    (grid,) = row_grid(size)
+    h, w = check_grid(torch.tensor([grid]), config)
+    n, share = h * w, config.max_patches // RING_SIZE
+    chips = sampled_rows(n, config.max_patches)
+    assert len(chips) == RING_SIZE
+    for chip, rows in enumerate(chips):
+        first, last = chip * share, min((chip + 1) * share, n) - 1
+        assert len(rows) == len(rows.unique()) == 256, chip
+        assert torch.equal(rows, rows.sort().values), chip
+        assert rows[0] == first and rows[-1] == last, chip
+    if size == "partial":
+        assert (n - (RING_SIZE - 1) * share) % 32
