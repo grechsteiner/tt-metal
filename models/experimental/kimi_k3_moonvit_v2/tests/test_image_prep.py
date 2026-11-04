@@ -64,7 +64,7 @@ def hf_plan(width: int, height: int, cfg: dict) -> image_prep.ResizePlan:
     )
 
 
-# (width, height) -> padded grid (h, w), from the plan's F7.
+# (width, height) -> padded grid (h, w)
 KNOWN_GRIDS = {
     (1889, 7377): (510, 132),  # the largest HF grid, 67,320 patches
     (3590, 3590): (258, 258),  # over the limit from padding alone

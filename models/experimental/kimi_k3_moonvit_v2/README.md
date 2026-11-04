@@ -64,6 +64,17 @@ pushes over (3590x3590 -> 258x258). Over-limit images are rejected, never shrunk
 would diverge from HF. Only RGB images are accepted; other modes (including anything with
 transparency, which HF composites onto a chessboard) raise `ValueError`.
 
+TODO (image pre-processing, `tt/image_prep.py`):
+
+- Handle non-RGB images as HF does, instead of rejecting them: convert other modes to RGB *after*
+  the resize (Pillow resizes P and 1 with nearest neighbour and RGBA with premultiplied alpha, so
+  converting first does not match HF). Test against `reference/kimi_k3_vision_processing.py` for
+  RGBA, LA, PA, L, P, 1, CMYK and I;16.
+- Handle `transparent_bg_config` and `transparent_bg_fill_stage` (`reference/preprocessor_config.json`):
+  composite images with alpha (RGBA, LA, PA, and P or L with `tRNS`) onto an 8 px chessboard
+  (white 255, gray 180, white square top left), after the resize and before the black pad. Read the
+  values from the config rather than hard-coding them.
+
 ## Weights
 
 The `reference` (every layer) and `shallow_reference` (the first two layers, for the full-model

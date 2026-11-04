@@ -69,9 +69,16 @@ def image_to_patches(image: Image.Image, config: MoonViTConfig) -> tuple[torch.T
         raise ValueError(f"image {image.width}x{image.height}: {e}") from e
 
     image = image.resize((plan.new_w, plan.new_h), resample=Image.Resampling.BICUBIC)
-    pixels = np.pad(np.asarray(image), ((0, plan.pad_h), (0, plan.pad_w), (0, 0)))
-    x = (torch.from_numpy(pixels).float() / 255 - IMAGE_MEAN) / IMAGE_STD
+    x = np.pad(
+        np.asarray(image),
+        ((0, plan.pad_h), (0, plan.pad_w), (0, 0)),
+        mode="constant",
+        constant_values=0,
+    )
 
+    x = (x / 255.0).astype(np.float32)
+    x -= IMAGE_MEAN
+    x *= 1.0 / IMAGE_STD
     p = config.patch_size
-    x = x.reshape(plan.grid_h, p, plan.grid_w, p, 3).permute(0, 2, 4, 1, 3)
-    return x.reshape(-1, 3, p, p), grid_thws
+    x = x.reshape(plan.grid_h, p, plan.grid_w, p, 3).transpose(0, 2, 4, 1, 3).reshape(-1, 3, p, p)
+    return torch.from_numpy(x), grid_thws
