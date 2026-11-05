@@ -18,7 +18,7 @@ import torch
 
 import ttnn
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
-from models.experimental.kimi_k3_moonvit_v2.tests.common import SYNTHETIC, REAL, device_config, random_patches
+from models.experimental.kimi_k3_moonvit_v2.tests.common import SYNTHETIC, device_config, random_patches
 from models.experimental.kimi_k3_moonvit_v2.tt import module, vision_model
 from models.experimental.kimi_k3_moonvit_v2.tt.device_input import DeviceInput
 from models.experimental.kimi_k3_moonvit_v2.tt.module import LoadingError, Module, Parameter, rename_substate
@@ -60,7 +60,6 @@ def host_inputs(monkeypatch):
 
 
 @SYNTHETIC
-@REAL
 def test_vision_model_loads_reference(host_parameters, shallow_config, shallow_reference):
     tt = vision_model.TT_MoonViT_Vision_Model(device_config(shallow_config, None), mesh_device=host_parameters)
     state = shallow_reference.state_dict()
@@ -85,7 +84,6 @@ def test_vision_model_loads_reference(host_parameters, shallow_config, shallow_r
 
 
 @SYNTHETIC
-@REAL
 def test_rejects_missing_and_unexpected_keys(host_parameters, shallow_config, shallow_reference, expect_error):
     state = shallow_reference.state_dict()
     state.pop("vision_tower.encoder.final_layernorm.weight")
@@ -130,7 +128,6 @@ def test_device_input_writes_in_place(host_inputs):
 
 
 @SYNTHETIC
-@REAL
 def test_prepare_inputs_reuses_device_tensors(host_parameters, host_inputs, shallow_config, shallow_reference):
     """A second image of another size lands in the first image's device tensors."""
     config = dataclasses.replace(shallow_config, max_patches=1024)

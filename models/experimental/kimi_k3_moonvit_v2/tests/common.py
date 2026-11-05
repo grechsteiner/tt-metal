@@ -72,8 +72,8 @@ GRIDS = {
 ATTENTION_GRIDS = pytest.mark.parametrize("grid", [[(1, 64, 64)], [(1, 40, 100)]], ids=["64x64", "40x100"])
 
 # Device grids for the parts that work on each row alone (everything but attention). Their CPU golden
-# grows only with the row count, so it runs at the full padded length in seconds. Both meshes run the
-# same image; one P150 runs one ring chip's quarter of it (`MeshRows`):
+# grows only with the row count, so it runs at the full padded length in seconds. One P150 runs one
+# ring chip's quarter of the image (`MeshRows`):
 #   full:     fills the padded length exactly; real rows on every ring chip, no padding
 #   max_side: also fills it, with the longest side the processor allows (512)
 #   partial:  nearly full; the real rows end inside a tile (not a multiple of 32) on the last chip
@@ -145,7 +145,7 @@ RING_FABRIC = {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}
 RING4 = pytest.param((1, RING_SIZE), 1, 2, RING_FABRIC, id="ring1x4")
 # One P150 standing in for one chip of that ring: it runs that chip's quarter of the padded sequence
 # (`device_config`, `MeshRows`), never the whole of it.
-P150 = pytest.param((1, 1), None, 1, {}, id="p150")
+P150_CHIP = pytest.param((1, 1), None, 1, {}, id="p150")
 
 
 def mesh_params(*params):
@@ -156,9 +156,10 @@ def mesh_params(*params):
     )
 
 
-# Attention needs the ring. Parts that work on each row alone also run on one P150.
+# Attention needs the ring, so only tests with attention in them use it. Parts that work on each row
+# alone run on one P150.
 RING = mesh_params(RING4)
-P150_AND_RING = mesh_params(P150, RING4)
+P150 = mesh_params(P150_CHIP)
 
 # Traced tests (`Trace`): the ring with DRAM set aside for the captured commands.
 TRACE_REGION_SIZE = 100_000_000
@@ -184,7 +185,7 @@ SIMULATOR_GRID = [(1, 6, 20)]
 def SIMULATOR(test):
     """Mark `test` as a sim test: the `simulator` mark and one P150. Weights come from the test's
     own SYNTHETIC or REAL."""
-    return mesh_params(P150)(getattr(pytest.mark, SIMULATOR_MARK)(test))
+    return P150(getattr(pytest.mark, SIMULATOR_MARK)(test))
 
 
 def simulator_config(config: MoonViTConfig) -> MoonViTConfig:

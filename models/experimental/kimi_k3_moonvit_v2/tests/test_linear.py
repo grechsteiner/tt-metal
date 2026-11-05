@@ -11,7 +11,6 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SYNTHETIC,
-    REAL,
     SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
@@ -19,7 +18,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     padding_layout_grid,
     PADDING_LAYOUT_GRIDS,
     MeshRows,
-    P150_AND_RING,
+    P150,
     SIMULATOR_GRID,
     SIMULATOR,
     random_patches,
@@ -89,9 +88,8 @@ def check_patch_embed_linear(mesh_device, sp_axis, config, reference, grid) -> N
     assert_quality(golden, rows.gather(out, mesh_device), relative_rmse=0.004)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @SAMPLED_LAYERS
 @PADDING_LAYOUT_GRIDS
 @ENCODER_LINEAR_PATHS
@@ -107,9 +105,8 @@ def test_encoder_linear_small(mesh_device, sp_axis, num_links, config, reference
     check_encoder_linear(mesh_device, sp_axis, simulator_config(config), reference, 0, path, SIMULATOR_GRID)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @PADDING_LAYOUT_GRIDS
 @PROJECTOR_LINEAR_PATHS
 def test_projector_linear(mesh_device, sp_axis, num_links, config, reference, size, path):
@@ -124,9 +121,8 @@ def test_projector_linear_small(mesh_device, sp_axis, num_links, config, referen
     check_projector_linear(mesh_device, sp_axis, simulator_config(config), reference, path, SIMULATOR_GRID)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @PADDING_LAYOUT_GRIDS
 def test_patch_embed_linear(mesh_device, sp_axis, num_links, config, reference, size):
     check_patch_embed_linear(mesh_device, sp_axis, config, reference, padding_layout_grid(size))

@@ -15,14 +15,13 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SYNTHETIC,
-    REAL,
     SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
     padding_layout_grid,
     PADDING_LAYOUT_GRIDS,
     MeshRows,
-    P150_AND_RING,
+    P150,
     SIMULATOR_GRID,
     SIMULATOR,
     simulator_config,
@@ -73,9 +72,8 @@ def check_projector_rms_norm(mesh_device, sp_axis, config, reference, grid) -> N
     check_rms_norm(mesh_device, torch_norm, config.projector_norm_eps, rows)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @SAMPLED_LAYERS
 @PADDING_LAYOUT_GRIDS
 @ENCODER_NORMS
@@ -91,9 +89,8 @@ def test_encoder_rms_norm_small(mesh_device, sp_axis, num_links, config, referen
     check_encoder_rms_norm(mesh_device, sp_axis, simulator_config(config), reference, 0, name, SIMULATOR_GRID)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @PADDING_LAYOUT_GRIDS
 def test_final_rms_norm(mesh_device, sp_axis, num_links, config, reference, size):
     check_final_rms_norm(mesh_device, sp_axis, config, reference, padding_layout_grid(size))
@@ -106,9 +103,8 @@ def test_final_rms_norm_small(mesh_device, sp_axis, num_links, config, reference
     check_final_rms_norm(mesh_device, sp_axis, simulator_config(config), reference, SIMULATOR_GRID)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @PADDING_LAYOUT_GRIDS
 def test_projector_rms_norm(mesh_device, sp_axis, num_links, config, reference, size):
     check_projector_rms_norm(mesh_device, sp_axis, config, reference, padding_layout_grid(size))

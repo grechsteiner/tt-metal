@@ -80,7 +80,10 @@ TODO (image pre-processing, `tt/image_prep.py`):
 The `reference` (every layer) and `shallow_reference` (the first two layers, for the CPU
 tests) fixtures in `tests/conftest.py` build with the weights a test's marks ask for. A test with
 `@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
-once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights):
+once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights). CPU tests
+use random weights only (`test_load_checkpoint.py` reads the checkpoint itself). Device tests use the
+checkpoint only for attention, the MLP, the projector and what contains them (block, full model,
+full size); the other device tests use random weights only:
 
 - `synthetic`: the reference initialized under `torch.manual_seed(0)`, with norm weights drawn around
   one so a norm that fails to load shows up.
@@ -104,7 +107,7 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_load_checkpoint.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_module.py
 
-# Device, one P150 or a LoudBox: parts that work on each row alone
+# Device, one P150: parts that work on each row alone
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rms_norm.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rope.py \
@@ -119,9 +122,10 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_vision_attention.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_model.py
 ```
 
-Each row-wise test has a `ring1x4` case and a `p150` case, where one chip stands in for one chip of
-the ring and gets the first quarter of the padded sequence (16,384 rows);
-pytest skips the cases that need more chips than the machine has.
+Only tests with attention in them (attention, block, full model, full size) run on the ring
+(`ring1x4`); pytest skips them when the machine has fewer chips. The row-wise tests run on one P150
+(`p150`), which stands in for one chip of the ring and gets one quarter of the padded sequence
+(16,384 rows).
 
 Image sizes (`tests/common.py`): the row-wise tests (`PADDING_LAYOUT_GRIDS`) compare against a CPU golden of
 the full padded length, which takes seconds since nothing there scales with the square of the

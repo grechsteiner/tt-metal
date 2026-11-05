@@ -16,7 +16,6 @@ from models.experimental.kimi_k3_moonvit_v2.reference.kimi_k3_vision import Kimi
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import tpool_patch_merger
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SYNTHETIC,
-    REAL,
     GRIDS,
     PADDING_LAYOUT_GRIDS,
     MeshRows,
@@ -59,7 +58,6 @@ def test_from_hf_config_defaults_match_reference(tmp_path, vision_config):
 
 
 @SYNTHETIC
-@REAL
 @pytest.mark.parametrize("grid", GRIDS.values(), ids=GRIDS.keys())
 @torch.no_grad()
 def test_forward_shape(shallow_config, shallow_reference, grid):

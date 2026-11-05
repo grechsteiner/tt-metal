@@ -15,14 +15,13 @@ from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import apply_rope
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SYNTHETIC,
-    REAL,
     random_tensor,
     assert_quality,
     device_config,
     padding_layout_grid,
     PADDING_LAYOUT_GRIDS,
     MeshRows,
-    P150_AND_RING,
+    P150,
     SIMULATOR_GRID,
     SIMULATOR,
     reference_rope,
@@ -77,7 +76,7 @@ def check_rope_apply(mesh_device, sp_axis, num_links, config, reference, grid) -
     assert_quality(rows.take(golden), rows.gather(out, mesh_device), relative_rmse=0.008)
 
 
-@P150_AND_RING
+@P150
 @PADDING_LAYOUT_GRIDS
 def test_rope_tables(mesh_device, sp_axis, num_links, config, size):
     check_rope_tables(mesh_device, sp_axis, num_links, config, padding_layout_grid(size))
@@ -89,9 +88,8 @@ def test_rope_tables_small(mesh_device, sp_axis, num_links, config):
     check_rope_tables(mesh_device, sp_axis, num_links, simulator_config(config), SIMULATOR_GRID)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
-@REAL
 @PADDING_LAYOUT_GRIDS
 def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, size):
     check_rope_apply(mesh_device, sp_axis, num_links, config, reference, padding_layout_grid(size))

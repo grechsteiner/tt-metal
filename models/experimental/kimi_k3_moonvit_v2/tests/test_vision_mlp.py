@@ -17,7 +17,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     device_config,
     padding_layout_grid,
     PADDING_LAYOUT_GRIDS,
-    P150_AND_RING,
+    P150,
     SIMULATOR_GRID,
     SIMULATOR,
     MeshRows,
@@ -43,7 +43,7 @@ def check_vision_mlp(mesh_device, sp_axis, config, reference, layer, grid) -> No
     assert_quality(golden, rows.gather(out, mesh_device), relative_rmse=0.005)
 
 
-@P150_AND_RING
+@P150
 @SYNTHETIC
 @REAL
 @SAMPLED_LAYERS

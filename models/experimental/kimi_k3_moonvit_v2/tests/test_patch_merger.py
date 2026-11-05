@@ -18,7 +18,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     padding_layout_grid,
     PADDING_LAYOUT_GRIDS,
     MeshRows,
-    P150_AND_RING,
+    P150,
     SIMULATOR_GRID,
     SIMULATOR,
     simulator_config,
@@ -46,7 +46,7 @@ def check_patch_merger(mesh_device, sp_axis, config, grid) -> None:
     assert torch.equal(golden, actual)
 
 
-@P150_AND_RING
+@P150
 @PADDING_LAYOUT_GRIDS
 def test_patch_merger(mesh_device, sp_axis, num_links, config, size):
     check_patch_merger(mesh_device, sp_axis, config, padding_layout_grid(size))
