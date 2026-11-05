@@ -143,7 +143,10 @@ class TT_MoonViT_Vision_Model(Module):
         Returns `patches` [1, 1, S/sp, padded_patch_dim], `pos_emb` [1, 1, S/sp, hidden], `rope` and
         `logical_n` (the unpadded length, [1, 1, 1, 1] uint32), rows in window order.
         """
-        host = prepare_host_inputs(self.config, self.vision_tower.patch_embed.pos_emb_weight, pixel_values, grid_thws)
+        pos_emb_weight = self.vision_tower.patch_embed.pos_emb_weight
+        if pos_emb_weight is None:
+            raise RuntimeError("weights not loaded; call load_torch_state_dict or load_cached first")
+        host = prepare_host_inputs(self.config, pos_emb_weight, pixel_values, grid_thws)
         return {
             "patches": self.patches.write(host["patches"]),
             "pos_emb": self.pos_emb.write(host["pos_emb"]),

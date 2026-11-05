@@ -25,7 +25,7 @@ import ttnn
 
 from .linear import Linear
 from .model_config import MoonViTConfig
-from .module import Module
+from .module import LoadingError, Module
 
 
 class TT_Patch_Embed(Module):
@@ -48,8 +48,9 @@ class TT_Patch_Embed(Module):
         if weight is not None and weight.ndim > 2:
             weight = weight.reshape(self.config.hidden_size, self.config.patch_dim)
             state["proj.weight"] = F.pad(weight, (0, self.config.padded_patch_dim - self.config.patch_dim))
-        if "pos_emb.weight" in state:
-            self.pos_emb_weight = state.pop("pos_emb.weight")
+        if "pos_emb.weight" not in state:
+            raise LoadingError("pos_emb.weight: missing")
+        self.pos_emb_weight = state.pop("pos_emb.weight")
 
     def save(self, directory: str | Path, /, *, prefix: str = "") -> None:
         if self.pos_emb_weight is None:

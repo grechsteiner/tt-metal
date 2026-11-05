@@ -93,6 +93,22 @@ def test_rejects_missing_and_unexpected_keys(host_parameters, shallow_config, sh
         tt.load_torch_state_dict(state)
 
 
+@SYNTHETIC
+def test_rejects_missing_pos_emb(host_parameters, shallow_config, shallow_reference, expect_error):
+    """The position table is kept on the host, not as a `Parameter`, so it has its own missing-key check."""
+    state = shallow_reference.state_dict()
+    state.pop("vision_tower.patch_embed.pos_emb.weight")
+    tt = vision_model.TT_MoonViT_Vision_Model(device_config(shallow_config, None), mesh_device=host_parameters)
+    with expect_error(LoadingError, "pos_emb.weight"):
+        tt.load_torch_state_dict(state)
+
+
+def test_prepare_inputs_needs_loaded_weights(host_parameters, shallow_config, expect_error):
+    tt = vision_model.TT_MoonViT_Vision_Model(device_config(shallow_config, None), mesh_device=host_parameters)
+    with expect_error(RuntimeError, "weights not loaded"):
+        tt.prepare_inputs(*random_patches(shallow_config, [(1, 8, 8)]))
+
+
 def test_rename_substate():
     state = {"wqkv.weight": 1, "wo.weight": 2, "norm0.weight": 3}
     rename_substate(state, "wqkv", "attention.wqkv")
