@@ -24,6 +24,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     padding_layout_grid,
     sampled_rows,
     REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS,
+    SAMPLED_ROWS_PER_CHIP,
 )
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
     RING_SIZE,
@@ -158,7 +159,7 @@ def test_full_length_sampled_rows(config, size):
     assert len(chips) == RING_SIZE
     for chip, rows in enumerate(chips):
         first, last = chip * share, min((chip + 1) * share, n) - 1
-        assert len(rows) == len(rows.unique()) == 256, chip
+        assert len(rows) == len(rows.unique()) == SAMPLED_ROWS_PER_CHIP, chip
         assert torch.equal(rows, rows.sort().values), chip
         assert rows[0] == first and rows[-1] == last, chip
     if size == "partial":

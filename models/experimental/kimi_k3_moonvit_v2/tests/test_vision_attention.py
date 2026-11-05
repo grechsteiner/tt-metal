@@ -87,8 +87,7 @@ def test_vision_attention_full_length(mesh_device, sp_axis, num_links, config, r
     h, w = check_grid(grid_thws, config)
     x = random_tensor(h * w, config.hidden_size)
     chips = sampled_rows(h * w, config.max_patches)
-    window_to_raster = host_prep.to_window_order(torch.arange(h * w)[:, None], h, w, config.merge_kernel_size)[:, 0]
-    query_rows = window_to_raster[torch.cat(chips)].sort().values
+    query_rows = host_prep.window_order(h, w, config.merge_kernel_size)[torch.cat(chips)].sort().values
     cu_seqlens, max_seqlen, rope_freqs_cis = reference_rope(reference, grid_thws)
     with torch.no_grad(), use_sampled_attention(query_rows):
         golden = to_fp32(copy.deepcopy(block)).attention_qkvpacked(x.float(), cu_seqlens, max_seqlen, rope_freqs_cis)

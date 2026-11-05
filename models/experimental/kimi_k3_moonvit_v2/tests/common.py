@@ -18,6 +18,7 @@ import ttnn
 from models.common.utility_functions import comp_pcc
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
+from models.experimental.kimi_k3_moonvit_v2.tt.device_input import sp_mesh_mapper
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 
 # Depth of the shallow model that the full-model tests run (`shallow_reference`, `shallow_config`).
@@ -153,7 +154,8 @@ def assert_quality_parts(
 # route the ring's wraparound link there.
 LOUDBOX_SHAPE = (2, RING_SIZE)
 RING_FABRIC = {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}
-RING4 = pytest.param((1, RING_SIZE), 1, 2, RING_FABRIC, id="ring1x4")
+RING_NUM_LINKS = 2
+RING4 = pytest.param((1, RING_SIZE), 1, RING_NUM_LINKS, RING_FABRIC, id="ring1x4")
 # One P150 standing in for one chip of that ring: it runs that chip's quarter of the padded sequence
 # (`device_config`, `MeshRows`), never the whole of it.
 P150_CHIP = pytest.param((1, 1), None, 1, {}, id="p150")
@@ -175,7 +177,9 @@ P150 = mesh_params(P150_CHIP)
 # Traced tests (`Trace`): the ring with DRAM set aside for the captured commands.
 TRACE_REGION_SIZE = 100_000_000
 RING_TRACE = mesh_params(
-    pytest.param((1, RING_SIZE), 1, 2, {**RING_FABRIC, "trace_region_size": TRACE_REGION_SIZE}, id="ring1x4")
+    pytest.param(
+        (1, RING_SIZE), 1, RING_NUM_LINKS, {**RING_FABRIC, "trace_region_size": TRACE_REGION_SIZE}, id="ring1x4"
+    )
 )
 # Untimed replays, then timed ones (`Trace.time_replays`).
 TRACE_WARMUP = 2
@@ -331,12 +335,7 @@ def sp_shard(
     if x.shape[-2] > rows:
         raise ValueError(f"{x.shape[-2]} rows do not fit the padded length {rows}")
     padded = torch.nn.functional.pad(x, (0, 0, 0, rows - x.shape[-2]))[None]
-    if sp_axis is None:
-        mapper = ttnn.ReplicateTensorToMesh(mesh_device)
-    else:
-        dims = [None, None]
-        dims[sp_axis] = 2
-        mapper = ttnn.ShardTensor2dMesh(mesh_device, mesh_shape=tuple(mesh_device.shape), dims=dims)
+    mapper = sp_mesh_mapper(mesh_device, sp_axis)
     return ttnn.from_torch(padded, device=mesh_device, dtype=dtype, layout=layout, mesh_mapper=mapper)
 
 

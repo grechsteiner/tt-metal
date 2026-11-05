@@ -22,6 +22,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
 )
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import (
     NORM_EPS,
+    block_file,
     chunked_attention,
     encoder_steps,
     to_fp32,
@@ -42,7 +43,7 @@ def test_encoder_steps_match_encoder(shallow_config, shallow_reference):
         # Resuming at block 1 from block 0's output gives the same result.
         resumed = dict(encoder_steps(shallow_reference, steps["block_00"], grid_thws, start=1))
 
-    blocks = [f"block_{i:02d}" for i in range(shallow_config.num_hidden_layers)]
+    blocks = [block_file(i)[:-3] for i in range(shallow_config.num_hidden_layers)]
     assert list(steps) == blocks + ["final_layernorm", "mm_projector"]
     assert torch.equal(steps["final_layernorm"], expected)
     assert torch.equal(resumed["final_layernorm"], expected)
@@ -53,6 +54,7 @@ def test_encoder_steps_match_encoder(shallow_config, shallow_reference):
 def test_to_fp32_keeps_explicit_norm_eps(shallow_config, shallow_reference):
     """`to_fp32` gives the encoder norms (`eps=None`) the bf16 eps and leaves the projector's
     `post_norm` eps (set explicitly) alone."""
+    assert NORM_EPS == torch.finfo(torch.bfloat16).eps  # what upstream's eps=None gives bf16 input
     reference = to_fp32(copy.deepcopy(shallow_reference))
     assert reference.vision_tower.encoder.final_layernorm.eps == NORM_EPS
     assert reference.vision_tower.encoder.blocks[0].norm0.eps == NORM_EPS

@@ -56,6 +56,7 @@ import torch
 from models.experimental.kimi_k3_moonvit_v2.reference import modeling_kimi_k3 as upstream
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import checkpoint_path
 from models.experimental.kimi_k3_moonvit_v2.tests.common import REAL_MARK, random_patches, reference_rope
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import MoonViTConfig
 
 GOLDEN_DIR_ENV = "MOONVIT_GOLDEN_DIR"
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -71,8 +72,9 @@ REFERENCE_FILES = (
 )
 DTYPES = {"fp32": torch.float32, "bf16": torch.bfloat16}
 CHUNK_SIZE = 2048
-# The bf16 model's RMSNorm eps (`nn.RMSNorm(eps=None)` on bf16 input), kept when running in fp32.
-NORM_EPS = torch.finfo(torch.bfloat16).eps
+# The bf16 model's RMSNorm eps (`nn.RMSNorm(eps=None)` on bf16 input), kept when running in fp32. The
+# device uses the same value (`MoonViTConfig.norm_eps`).
+NORM_EPS = MoonViTConfig().norm_eps
 
 
 def golden_dir() -> Path | None:
@@ -221,7 +223,6 @@ def load(h: int, w: int, seed: int, name: str, dtype: str = "fp32") -> torch.Ten
 
 def generate(h: int, w: int, seed: int, dtype: str, blocks: int | None) -> None:
     from models.experimental.kimi_k3_moonvit_v2.tests.conftest import build_reference
-    from models.experimental.kimi_k3_moonvit_v2.tt.model_config import MoonViTConfig
 
     checkpoint = checkpoint_path()
     if checkpoint is None:
