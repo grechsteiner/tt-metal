@@ -14,10 +14,12 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
+    SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
     ATTENTION_GRIDS,
-    REFERENCE_LAYERS,
     RING,
     reference_rope,
     ring_parallel,
@@ -38,7 +40,9 @@ from models.experimental.kimi_k3_moonvit_v2.tt.vision_attention import TT_Vision
 
 
 @RING
-@REFERENCE_LAYERS
+@SYNTHETIC
+@REAL
+@SAMPLED_LAYERS
 @ATTENTION_GRIDS
 def test_vision_attention(mesh_device, sp_axis, num_links, config, reference, grid, layer):
     parallel = resolve_parallel(mesh_device, *ring_parallel(mesh_device, sp_axis, num_links), config)
@@ -64,7 +68,9 @@ def test_vision_attention(mesh_device, sp_axis, num_links, config, reference, gr
 
 
 @RING
-@REFERENCE_LAYERS
+@SYNTHETIC
+@REAL
+@SAMPLED_LAYERS
 @FULL_LENGTH_GRIDS
 def test_vision_attention_full_length(mesh_device, sp_axis, num_links, config, reference, size, layer):
     """The ring at the production padded length (`max_patches`), on an image with real rows on every

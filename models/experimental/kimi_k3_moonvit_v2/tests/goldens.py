@@ -55,7 +55,7 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.reference import modeling_kimi_k3 as upstream
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import checkpoint_path
-from models.experimental.kimi_k3_moonvit_v2.tests.common import random_patches, reference_rope
+from models.experimental.kimi_k3_moonvit_v2.tests.common import REAL_MARK, random_patches, reference_rope
 
 GOLDEN_DIR_ENV = "MOONVIT_GOLDEN_DIR"
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -248,7 +248,7 @@ def generate(h: int, w: int, seed: int, dtype: str, blocks: int | None) -> None:
         print(f"[goldens] {name}: {seconds:.1f} s, peak RSS so far {peak_gb:.1f} GB", flush=True)
 
     t = time.time()
-    reference = build_reference("checkpoint", None)
+    reference = build_reference(REAL_MARK, None)
     if dtype == "fp32":
         reference = to_fp32(reference)
     config = MoonViTConfig.from_hf_config(checkpoint)

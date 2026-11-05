@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import os
 import time
 
@@ -24,36 +23,40 @@ from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
 # Depth of the shallow model that the full-model tests run (`shallow_reference`, `shallow_config`).
 TEST_LAYERS = 2
 
-# Fixtures (conftest.py), each with random weights or the checkpoint at $KIMI_K3_HF_MODEL:
-# `reference` has every layer, `shallow_reference` the first TEST_LAYERS.
-WEIGHTS = ["random", "checkpoint"]
-REFERENCE = pytest.mark.parametrize("reference", WEIGHTS, indirect=True)
-SHALLOW_REFERENCE = pytest.mark.parametrize("shallow_reference", WEIGHTS, indirect=True)
+# Weights. A test that builds `reference` or `shallow_reference` carries one or both of these marks,
+# and conftest.py runs it once per mark: SYNTHETIC with random weights, REAL with the checkpoint at
+# $KIMI_K3_HF_MODEL. `-m synthetic` or `-m real` selects by weights.
+SYNTHETIC_MARK = "synthetic"
+REAL_MARK = "real"
+WEIGHTS = [SYNTHETIC_MARK, REAL_MARK]
+SYNTHETIC = getattr(pytest.mark, SYNTHETIC_MARK)
+REAL = getattr(pytest.mark, REAL_MARK)
 
-# Layers the per-layer tests cover. With random weights every layer is alike, so one is enough;
-# with the checkpoint, the first, middle and last. MOONVIT_TEST_LAYERS (e.g. "5" or "0,20") sets
-# the layers for both.
-LAYERS_ENV = "MOONVIT_TEST_LAYERS"
+# Layers, for tests that take `layer`. Independent of the weights.
+NUM_LAYERS = MoonViTConfig().num_hidden_layers
 
 
-def _test_layers() -> dict[str, list[int]]:
+def layer_id(layer: int) -> str:
+    return f"layer{layer}"
+
+
+# MOONVIT_TEST_LAYER (e.g. "5") runs that one layer in place of SAMPLED_LAYERS.
+LAYERS_ENV = "MOONVIT_TEST_LAYER"
+
+
+def _sampled_layers() -> list[int]:
     value = os.environ.get(LAYERS_ENV)
-    if value:
-        layers = [int(layer) for layer in value.split(",")]
-        return {"random": layers, "checkpoint": layers}
-    n = MoonViTConfig().num_hidden_layers
-    return {"random": [0], "checkpoint": [0, n // 2, n - 1]}
+    if not value:
+        return [0, NUM_LAYERS // 2, NUM_LAYERS - 1]
+    if not value.isdigit() or int(value) >= NUM_LAYERS:
+        raise ValueError(f"${LAYERS_ENV} must be one layer, 0 to {NUM_LAYERS - 1}; got {value!r}")
+    return [int(value)]
 
 
-REFERENCE_LAYERS = pytest.mark.parametrize(
-    ("reference", "layer"),
-    [
-        pytest.param(weights, layer, id=f"{weights}-layer{layer}")
-        for weights, layers in _test_layers().items()
-        for layer in layers
-    ],
-    indirect=["reference"],
-)
+# The first, middle and last layer, or the one layer of $MOONVIT_TEST_LAYER.
+SAMPLED_LAYERS = pytest.mark.parametrize("layer", _sampled_layers(), ids=layer_id)
+# Every layer, whatever $MOONVIT_TEST_LAYER says.
+ALL_LAYERS = pytest.mark.parametrize("layer", range(NUM_LAYERS), ids=layer_id)
 
 # (t, h, w) in patches. h and w are even, as the processor's 28 px padding guarantees.
 GRIDS = {
@@ -179,14 +182,9 @@ SIMULATOR_GRID = [(1, 6, 20)]
 
 
 def SIMULATOR(test):
-    """Mark `test` as a sim test: the `simulator` mark, one P150, and random weights if it takes
-    `reference`."""
-    marks = [getattr(pytest.mark, SIMULATOR_MARK), mesh_params(P150)]
-    if "reference" in inspect.signature(test).parameters:
-        marks.append(pytest.mark.parametrize("reference", ["random"], indirect=True))
-    for mark in marks:
-        test = mark(test)
-    return test
+    """Mark `test` as a sim test: the `simulator` mark and one P150. Weights come from the test's
+    own SYNTHETIC or REAL."""
+    return mesh_params(P150)(getattr(pytest.mark, SIMULATOR_MARK)(test))
 
 
 def simulator_config(config: MoonViTConfig) -> MoonViTConfig:

@@ -14,14 +14,15 @@ import pytest
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
+    SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
     row_grid,
     ROW_GRIDS,
     MeshRows,
     P150_AND_RING,
-    REFERENCE,
-    REFERENCE_LAYERS,
     SIMULATOR_GRID,
     SIMULATOR,
     simulator_config,
@@ -73,7 +74,9 @@ def check_projector_rms_norm(mesh_device, sp_axis, config, reference, grid) -> N
 
 
 @P150_AND_RING
-@REFERENCE_LAYERS
+@SYNTHETIC
+@REAL
+@SAMPLED_LAYERS
 @ROW_GRIDS
 @ENCODER_NORMS
 def test_encoder_rms_norm(mesh_device, sp_axis, num_links, config, reference, size, layer, name):
@@ -81,6 +84,7 @@ def test_encoder_rms_norm(mesh_device, sp_axis, num_links, config, reference, si
 
 
 @SIMULATOR
+@SYNTHETIC
 @ENCODER_NORMS
 def test_encoder_rms_norm_small(mesh_device, sp_axis, num_links, config, reference, name):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
@@ -88,26 +92,30 @@ def test_encoder_rms_norm_small(mesh_device, sp_axis, num_links, config, referen
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 def test_final_rms_norm(mesh_device, sp_axis, num_links, config, reference, size):
     check_final_rms_norm(mesh_device, sp_axis, config, reference, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_final_rms_norm_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
     check_final_rms_norm(mesh_device, sp_axis, simulator_config(config), reference, SIMULATOR_GRID)
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 def test_projector_rms_norm(mesh_device, sp_axis, num_links, config, reference, size):
     check_projector_rms_norm(mesh_device, sp_axis, config, reference, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_projector_rms_norm_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS patches."""
     check_projector_rms_norm(mesh_device, sp_axis, simulator_config(config), reference, SIMULATOR_GRID)

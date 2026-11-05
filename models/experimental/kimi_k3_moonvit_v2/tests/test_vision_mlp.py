@@ -9,12 +9,14 @@ from __future__ import annotations
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
+    SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
-    REFERENCE_LAYERS,
     P150_AND_RING,
     SIMULATOR_GRID,
     SIMULATOR,
@@ -42,13 +44,16 @@ def check_vision_mlp(mesh_device, sp_axis, config, reference, layer, grid) -> No
 
 
 @P150_AND_RING
-@REFERENCE_LAYERS
+@SYNTHETIC
+@REAL
+@SAMPLED_LAYERS
 @ROW_GRIDS
 def test_vision_mlp(mesh_device, sp_axis, num_links, config, reference, size, layer):
     check_vision_mlp(mesh_device, sp_axis, config, reference, layer, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_vision_mlp_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
     check_vision_mlp(mesh_device, sp_axis, simulator_config(config), reference, 0, SIMULATOR_GRID)

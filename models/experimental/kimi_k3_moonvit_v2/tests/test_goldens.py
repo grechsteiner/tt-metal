@@ -15,7 +15,8 @@ import torch
 
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import eager_attention
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
-    SHALLOW_REFERENCE,
+    SYNTHETIC,
+    REAL,
     random_patches,
     random_tensor,
     reference_rope,
@@ -30,7 +31,8 @@ from models.experimental.kimi_k3_moonvit_v2.tests.goldens import (
 )
 
 
-@SHALLOW_REFERENCE
+@SYNTHETIC
+@REAL
 def test_encoder_steps_match_encoder(shallow_config, shallow_reference):
     tower = shallow_reference.vision_tower
     pixels, grid_thws = random_patches(shallow_config, [(1, 8, 12)])
@@ -49,7 +51,8 @@ def test_encoder_steps_match_encoder(shallow_config, shallow_reference):
     assert torch.equal(steps["mm_projector"], expected_model)
 
 
-@SHALLOW_REFERENCE
+@SYNTHETIC
+@REAL
 def test_to_fp32_keeps_explicit_norm_eps(shallow_config, shallow_reference):
     """`to_fp32` gives the encoder norms (`eps=None`) the bf16 eps and leaves the projector's
     `post_norm` eps (set explicitly) alone."""
@@ -69,7 +72,8 @@ def test_chunked_attention_matches_eager(length):
     torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
 
 
-@SHALLOW_REFERENCE
+@SYNTHETIC
+@REAL
 def test_fp32_chunked_encoder_matches_eager(shallow_config, shallow_reference):
     """The fp32 golden path (fp32 model, bf16 norm eps, chunked attention) against the same fp32 model
     with upstream eager attention, on an image of several chunks."""
@@ -84,7 +88,8 @@ def test_fp32_chunked_encoder_matches_eager(shallow_config, shallow_reference):
     torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
 
 
-@SHALLOW_REFERENCE
+@SYNTHETIC
+@REAL
 def test_sampled_attention_matches_eager(shallow_config, shallow_reference):
     """A block run with `use_sampled_attention`, as the full-length device tests build their golden,
     equals the same fp32 block with upstream eager attention on the sampled rows, over several query

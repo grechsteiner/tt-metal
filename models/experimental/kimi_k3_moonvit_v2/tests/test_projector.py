@@ -9,12 +9,13 @@ from __future__ import annotations
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
     random_tensor,
     assert_quality,
     device_config,
     row_grid,
     ROW_GRIDS,
-    REFERENCE,
     P150_AND_RING,
     SIMULATOR_GRID,
     SIMULATOR,
@@ -43,13 +44,15 @@ def check_projector(mesh_device, sp_axis, config, reference, grid) -> None:
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 def test_projector(mesh_device, sp_axis, num_links, config, reference, size):
     check_projector(mesh_device, sp_axis, config, reference, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_projector_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS patches."""
     check_projector(mesh_device, sp_axis, simulator_config(config), reference, SIMULATOR_GRID)

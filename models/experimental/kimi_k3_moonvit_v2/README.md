@@ -78,18 +78,21 @@ TODO (image pre-processing, `tt/image_prep.py`):
 ## Weights
 
 The `reference` (every layer) and `shallow_reference` (the first two layers, for the CPU
-tests) fixtures in `tests/conftest.py` are parametrized `random` and `checkpoint`:
+tests) fixtures in `tests/conftest.py` build with the weights a test's marks ask for. A test with
+`@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
+once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights):
 
-- `random`: the reference initialized under `torch.manual_seed(0)`, with norm weights drawn around
+- `synthetic`: the reference initialized under `torch.manual_seed(0)`, with norm weights drawn around
   one so a norm that fails to load shows up.
-- `checkpoint`: the vision tower and projector of the checkpoint at `KIMI_K3_HF_MODEL`. The
+- `real`: the vision tower and projector of the checkpoint at `KIMI_K3_HF_MODEL`. The
   loader opens only the shards holding `vision_tower.*` and `mm_projector.*` keys, so a folder with `model.safetensors.index.json`,
   `config.json`, `model-00095-of-000096.safetensors` and `model-00096-of-000096.safetensors` is
   enough. These cases skip when the variable is unset.
 
-Per-layer tests (attention, MLP, block, encoder linears and norms) take a `layer` parameter: layer
-0 with random weights, and layers 0, 13 and 26 with the checkpoint. `MOONVIT_TEST_LAYERS=5` or
-`MOONVIT_TEST_LAYERS=0,20` sets the layers for both.
+Per-layer tests take a `layer` parameter, set apart from the weights: `@SAMPLED_LAYERS` (layers 0,
+13 and 26; attention, MLP, block, encoder linears and norms) or `@ALL_LAYERS` (the full-size layer
+test). `MOONVIT_TEST_LAYER=5` runs only layer 5 in the `@SAMPLED_LAYERS` tests; `@ALL_LAYERS`
+ignores it.
 
 ## Tests
 

@@ -10,6 +10,9 @@ import pytest
 import torch
 
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
+    SAMPLED_LAYERS,
     random_tensor,
     assert_quality,
     device_config,
@@ -17,8 +20,6 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     ROW_GRIDS,
     MeshRows,
     P150_AND_RING,
-    REFERENCE,
-    REFERENCE_LAYERS,
     SIMULATOR_GRID,
     SIMULATOR,
     random_patches,
@@ -89,7 +90,9 @@ def check_patch_embed_linear(mesh_device, sp_axis, config, reference, grid) -> N
 
 
 @P150_AND_RING
-@REFERENCE_LAYERS
+@SYNTHETIC
+@REAL
+@SAMPLED_LAYERS
 @ROW_GRIDS
 @ENCODER_LINEAR_PATHS
 def test_encoder_linear(mesh_device, sp_axis, num_links, config, reference, size, layer, path):
@@ -97,6 +100,7 @@ def test_encoder_linear(mesh_device, sp_axis, num_links, config, reference, size
 
 
 @SIMULATOR
+@SYNTHETIC
 @ENCODER_LINEAR_PATHS
 def test_encoder_linear_small(mesh_device, sp_axis, num_links, config, reference, path):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
@@ -104,7 +108,8 @@ def test_encoder_linear_small(mesh_device, sp_axis, num_links, config, reference
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 @PROJECTOR_LINEAR_PATHS
 def test_projector_linear(mesh_device, sp_axis, num_links, config, reference, size, path):
@@ -112,6 +117,7 @@ def test_projector_linear(mesh_device, sp_axis, num_links, config, reference, si
 
 
 @SIMULATOR
+@SYNTHETIC
 @PROJECTOR_LINEAR_PATHS
 def test_projector_linear_small(mesh_device, sp_axis, num_links, config, reference, path):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS patches."""
@@ -119,13 +125,15 @@ def test_projector_linear_small(mesh_device, sp_axis, num_links, config, referen
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 def test_patch_embed_linear(mesh_device, sp_axis, num_links, config, reference, size):
     check_patch_embed_linear(mesh_device, sp_axis, config, reference, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_patch_embed_linear_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
     check_patch_embed_linear(mesh_device, sp_axis, simulator_config(config), reference, SIMULATOR_GRID)

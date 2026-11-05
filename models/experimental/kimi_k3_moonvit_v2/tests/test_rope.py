@@ -14,6 +14,8 @@ import ttnn
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.reference.modeling_kimi_k3 import apply_rope
 from models.experimental.kimi_k3_moonvit_v2.tests.common import (
+    SYNTHETIC,
+    REAL,
     random_tensor,
     assert_quality,
     device_config,
@@ -21,7 +23,6 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     ROW_GRIDS,
     MeshRows,
     P150_AND_RING,
-    REFERENCE,
     SIMULATOR_GRID,
     SIMULATOR,
     reference_rope,
@@ -89,13 +90,15 @@ def test_rope_tables_small(mesh_device, sp_axis, num_links, config):
 
 
 @P150_AND_RING
-@REFERENCE
+@SYNTHETIC
+@REAL
 @ROW_GRIDS
 def test_rope_apply(mesh_device, sp_axis, num_links, config, reference, size):
     check_rope_apply(mesh_device, sp_axis, num_links, config, reference, row_grid(size))
 
 
 @SIMULATOR
+@SYNTHETIC
 def test_rope_apply_small(mesh_device, sp_axis, num_links, config, reference):
     """Sized for ttsim: one chip's quarter of a ring padded to SIMULATOR_ROWS."""
     check_rope_apply(mesh_device, sp_axis, num_links, simulator_config(config), reference, SIMULATOR_GRID)
