@@ -14,8 +14,8 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
     assert_quality,
     device_config,
-    row_grid,
-    ROW_GRIDS,
+    padding_layout_grid,
+    PADDING_LAYOUT_GRIDS,
     P150_AND_RING,
     SIMULATOR_GRID,
     SIMULATOR,
@@ -46,9 +46,9 @@ def check_projector(mesh_device, sp_axis, config, reference, grid) -> None:
 @P150_AND_RING
 @SYNTHETIC
 @REAL
-@ROW_GRIDS
+@PADDING_LAYOUT_GRIDS
 def test_projector(mesh_device, sp_axis, num_links, config, reference, size):
-    check_projector(mesh_device, sp_axis, config, reference, row_grid(size))
+    check_projector(mesh_device, sp_axis, config, reference, padding_layout_grid(size))
 
 
 @SIMULATOR

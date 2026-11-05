@@ -78,20 +78,20 @@ ATTENTION_GRIDS = pytest.mark.parametrize("grid", [[(1, 64, 64)], [(1, 40, 100)]
 #   max_side: also fills it, with the longest side the processor allows (512)
 #   partial:  nearly full; the real rows end inside a tile (not a multiple of 32) on the last chip
 #   small:    a small image, almost all padding; every real row is on the first chip
-ROW_GRID_SIZES = {"full": (256, 256), "max_side": (512, 128), "partial": (250, 250), "small": (40, 100)}
-ROW_GRIDS = pytest.mark.parametrize("size", list(ROW_GRID_SIZES))
+PADDING_LAYOUT_SIZES = {"full": (256, 256), "max_side": (512, 128), "partial": (250, 250), "small": (40, 100)}
+PADDING_LAYOUT_GRIDS = pytest.mark.parametrize("size", list(PADDING_LAYOUT_SIZES))
 
 
-def row_grid(size: str) -> list[tuple[int, int, int]]:
-    h, w = ROW_GRID_SIZES[size]
+def padding_layout_grid(size: str) -> list[tuple[int, int, int]]:
+    h, w = PADDING_LAYOUT_SIZES[size]
     return [(1, h, w)]
 
 
 # Full-length attention and block tests: the ring runs the production padded length (`max_patches`)
-# on a ROW_GRID_SIZES image with real rows on every chip. The CPU golden at that length is too slow for
+# on a PADDING_LAYOUT_SIZES image with real rows on every chip. The CPU golden at that length is too slow for
 # every query row, so it computes SAMPLED_ROWS_PER_CHIP query rows of each chip, each against every key
 # (`goldens.use_sampled_attention`), and each chip's rows are checked on their own.
-FULL_LENGTH_GRIDS = pytest.mark.parametrize("size", ["full", "max_side", "partial"])
+REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS = pytest.mark.parametrize("size", ["full", "max_side", "partial"])
 SAMPLED_ROWS_PER_CHIP = 256
 
 

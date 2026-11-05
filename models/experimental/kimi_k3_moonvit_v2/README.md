@@ -123,7 +123,7 @@ Each row-wise test has a `ring1x4` case and a `p150` case, where one chip stands
 the ring and gets the first quarter of the padded sequence (16,384 rows);
 pytest skips the cases that need more chips than the machine has.
 
-Image sizes (`tests/common.py`): the row-wise tests (`ROW_GRIDS`) compare against a CPU golden of
+Image sizes (`tests/common.py`): the row-wise tests (`PADDING_LAYOUT_GRIDS`) compare against a CPU golden of
 the full padded length, which takes seconds since nothing there scales with the square of the
 length. Each size has one grid per mesh: `full` (256x256 on the ring, 128x128 on one chip) and
 `max_side` (512x128, 512x32) fill the padded length exactly, `partial` (250x250, 122x130) ends

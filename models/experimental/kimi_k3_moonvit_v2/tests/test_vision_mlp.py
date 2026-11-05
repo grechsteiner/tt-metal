@@ -15,8 +15,8 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_tensor,
     assert_quality,
     device_config,
-    row_grid,
-    ROW_GRIDS,
+    padding_layout_grid,
+    PADDING_LAYOUT_GRIDS,
     P150_AND_RING,
     SIMULATOR_GRID,
     SIMULATOR,
@@ -47,9 +47,9 @@ def check_vision_mlp(mesh_device, sp_axis, config, reference, layer, grid) -> No
 @SYNTHETIC
 @REAL
 @SAMPLED_LAYERS
-@ROW_GRIDS
+@PADDING_LAYOUT_GRIDS
 def test_vision_mlp(mesh_device, sp_axis, num_links, config, reference, size, layer):
-    check_vision_mlp(mesh_device, sp_axis, config, reference, layer, row_grid(size))
+    check_vision_mlp(mesh_device, sp_axis, config, reference, layer, padding_layout_grid(size))
 
 
 @SIMULATOR

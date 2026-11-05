@@ -26,8 +26,8 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     sp_gather,
     sp_shard,
     assert_quality_per_chip,
-    FULL_LENGTH_GRIDS,
-    row_grid,
+    REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS,
+    padding_layout_grid,
     sampled_rows,
 )
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import to_fp32, use_sampled_attention
@@ -71,7 +71,7 @@ def test_vision_attention(mesh_device, sp_axis, num_links, config, reference, gr
 @SYNTHETIC
 @REAL
 @SAMPLED_LAYERS
-@FULL_LENGTH_GRIDS
+@REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS
 def test_vision_attention_full_length(mesh_device, sp_axis, num_links, config, reference, size, layer):
     """The ring at the production padded length (`max_patches`), on an image with real rows on every
     chip. The fp32 golden covers `sampled_rows` of each chip only, each against every key
@@ -82,7 +82,7 @@ def test_vision_attention_full_length(mesh_device, sp_axis, num_links, config, r
     )
     block = reference.vision_tower.encoder.blocks[layer]
     tt.load_torch_state_dict({k: v for k, v in block.state_dict().items() if k.startswith(("wqkv.", "wo."))})
-    grid_thws = torch.tensor(row_grid(size))
+    grid_thws = torch.tensor(padding_layout_grid(size))
     h, w = check_grid(grid_thws, config)
     x = random_tensor(h * w, config.hidden_size)
     chips = sampled_rows(h * w, config.max_patches)

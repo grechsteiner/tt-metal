@@ -18,13 +18,13 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SYNTHETIC,
     REAL,
     GRIDS,
-    ROW_GRIDS,
+    PADDING_LAYOUT_GRIDS,
     MeshRows,
     device_config,
     random_patches,
-    row_grid,
+    padding_layout_grid,
     sampled_rows,
-    FULL_LENGTH_GRIDS,
+    REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS,
 )
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
     RING_SIZE,
@@ -107,11 +107,11 @@ def test_rejects_unsupported_grids(config, expect_error, grid, message):
         check_grid(torch.tensor(grid), config)
 
 
-@ROW_GRIDS
-def test_row_grids(config, size):
+@PADDING_LAYOUT_GRIDS
+def test_padding_layout_grids(config, size):
     """Each row-wise device grid is a valid image, and its shape and the quarter one P150 runs of it
     are what its name promises."""
-    (grid,) = row_grid(size)
+    (grid,) = padding_layout_grid(size)
     h, w = check_grid(torch.tensor([grid]), config)
     chip = MeshRows(h * w, config.max_patches, None)
     real = chip.real.stop - chip.real.start
@@ -148,12 +148,12 @@ def test_one_device_runs_at_most_a_ring_chips_share(config, expect_error):
         resolve_parallel(None, None, None, config)
 
 
-@FULL_LENGTH_GRIDS
+@REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS
 def test_full_length_sampled_rows(config, size):
     """The full-length grids put real rows on every ring chip, and `sampled_rows` takes
     SAMPLED_ROWS_PER_CHIP distinct real rows of each chip, its first and last real rows among them (on
     `partial`, the last chip's end inside a tile)."""
-    (grid,) = row_grid(size)
+    (grid,) = padding_layout_grid(size)
     h, w = check_grid(torch.tensor([grid]), config)
     n, share = h * w, config.max_patches // RING_SIZE
     chips = sampled_rows(n, config.max_patches)
