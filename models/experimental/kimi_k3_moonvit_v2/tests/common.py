@@ -15,10 +15,10 @@ import torch
 from loguru import logger
 
 import ttnn
-from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 from models.common.utility_functions import comp_pcc
+from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 
 # Depth of the shallow model that the full-model tests run (`shallow_reference`, `shallow_config`).
 TEST_LAYERS = 2
@@ -127,12 +127,23 @@ def assert_quality_per_chip(
     `actual`, both window order. Every chip is checked and logged before any failure is raised, so a
     wrong chip cannot hide behind three right ones."""
     label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
-    failed = []
+    parts = []
     for chip, rows in enumerate(chips):
         assert len(rows), f"{label}: chip {chip} holds no real rows"
-        q = quality(golden[rows], actual[rows])
-        logger.info(f"{label} chip {chip} ({len(rows)} rows): {format_quality(q)}")
-        failed += [f"chip {chip} {failure}" for failure in quality_failures(q, pcc, relative_rmse)]
+        parts.append((f"chip {chip} ({len(rows)} rows)", golden[rows], actual[rows]))
+    assert_quality_parts(parts, pcc, relative_rmse, label)
+
+
+def assert_quality_parts(
+    parts: list[tuple[str, torch.Tensor, torch.Tensor]], pcc: float, relative_rmse: float | None, label: str
+) -> None:
+    """`quality` of each `(name, golden, actual)` in `parts`. Every part is checked and logged before
+    any failure is raised."""
+    failed = []
+    for name, golden, actual in parts:
+        q = quality(golden, actual)
+        logger.info(f"{label} {name}: {format_quality(q)}")
+        failed += [f"{name} {failure}" for failure in quality_failures(q, pcc, relative_rmse)]
     assert not failed, f"{label}: {failed}"
 
 
@@ -270,7 +281,7 @@ def assert_quality(
     Thresholds follow tt_dit's `assert_quality` (PCC plus relative RMSE); CCC and the largest element
     differences are logged, not asserted. Each test's relative RMSE limit is about twice the largest
     value measured on Blackhole over its cases (random and checkpoint weights, both meshes), rounded
-    up. Tests whose forward is not written yet have none (`relative_rmse=None` logs it only)."""
+    up. `relative_rmse=None` logs it without asserting it."""
     label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
     q = quality(golden, actual)
     logger.info(f"{label}: {format_quality(q)}")
@@ -342,6 +353,18 @@ def sp_gather(x: ttnn.Tensor, mesh_device, sp_axis: int | None, logical_n: int) 
         composer = ttnn.ConcatMesh2dToTensor(mesh_device, mesh_shape=tuple(mesh_device.shape), dims=dims)
     out = ttnn.to_torch(x, mesh_composer=composer)[0, :, :logical_n]
     return out[0] if out.shape[0] == 1 else out
+
+
+def logical_length_tensor(mesh_device, n: int) -> ttnn.Tensor:
+    """The unpadded patch count as the `logical_n` the ring attention reads: [1, 1, 1, 1] uint32, row
+    major, replicated. The model writes it into a `DeviceInput` instead, so a trace can replay it."""
+    return ttnn.from_torch(
+        torch.tensor([n], dtype=torch.int64).reshape(1, 1, 1, 1),
+        device=mesh_device,
+        dtype=ttnn.uint32,
+        layout=ttnn.ROW_MAJOR_LAYOUT,
+        mesh_mapper=ttnn.ReplicateTensorToMesh(mesh_device),
+    )
 
 
 @dataclasses.dataclass(frozen=True)

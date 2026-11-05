@@ -24,9 +24,9 @@ import torch
 
 import ttnn
 
-from .host_prep import prepare_host_inputs
 from .ccl import ParallelFactor, TT_CCL, ccl_slot_for_layer
 from .device_input import DeviceInput
+from .host_prep import prepare_host_inputs
 from .model_config import MoonViTConfig, VisionParallel, check_grid, compute_kernel_config, resolve_parallel
 from .module import Module, ModuleList
 from .patch_embed import TT_Patch_Embed
@@ -175,7 +175,9 @@ class TT_MoonViT_Vision_Model(Module):
         self, patches: ttnn.Tensor, pos_emb: ttnn.Tensor, rope: RopeTensors, logical_n: ttnn.Tensor
     ) -> ttnn.Tensor:
         x = self.vision_tower(patches, pos_emb, rope, logical_n)
-        return self.mm_projector(x)
+        out = self.mm_projector(x)
+        ttnn.deallocate(x)
+        return out
 
     def run(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> torch.Tensor:
         """Host in, host out: (h*w, 3, 14, 14), [[1, h, w]] -> (h*w/4, text_hidden_size)."""

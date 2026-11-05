@@ -40,10 +40,9 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     RING,
     RING_TRACE,
     Trace,
+    assert_quality_parts,
     assert_same_as_untraced,
-    format_quality,
-    quality,
-    quality_failures,
+    logical_length_tensor,
     random_patches,
     ring_parallel,
     sp_gather,
@@ -56,15 +55,14 @@ from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
 )
 from models.experimental.kimi_k3_moonvit_v2.tt.patch_embed import TT_Patch_Embed
 from models.experimental.kimi_k3_moonvit_v2.tt.rope import TT_Rope
-from models.experimental.kimi_k3_moonvit_v2.tt.vision_attention import logical_length_tensor
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_block import TT_Vision_Block
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import TT_MoonViT_Encoder, TT_MoonViT_Vision_Model
 
 H, W, SEED = 256, 256, 0
+TRACE_LAYER = 0
 # Against the fp32 outputs, over every row and over each chip's quarter. Relative RMSE is RMS error over
 # the golden's standard deviation; limits as in common.py (measured: layers <= 1.4%, encoder <= 10.5%,
 # model <= 8.4%).
-TRACE_LAYER = 0
 LAYER_PCC = 0.99
 LAYER_RELATIVE_RMSE = 0.03
 ENCODER_PCC = 0.99
@@ -113,12 +111,7 @@ def check_quality(
     for chip in range(sp_factor):
         part = slice(chip * rows, (chip + 1) * rows)
         parts.append((f"chip {chip}", golden_w[part], actual_w[part]))
-    failed = []
-    for name, g, a in parts:
-        q = quality(g, a)
-        logger.info(f"{label} {name}: {format_quality(q)}")
-        failed += [f"{name} {failure}" for failure in quality_failures(q, pcc, relative_rmse)]
-    assert not failed, f"{label}: {failed}"
+    assert_quality_parts(parts, pcc, relative_rmse, label)
 
 
 def to_host(t: ttnn.Tensor, mesh_device, sp_axis: int, config) -> torch.Tensor:

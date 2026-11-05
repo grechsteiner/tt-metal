@@ -29,11 +29,12 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS,
     padding_layout_grid,
     sampled_rows,
+    logical_length_tensor,
 )
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import to_fp32, use_sampled_attention
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import check_grid, compute_kernel_config, resolve_parallel
 from models.experimental.kimi_k3_moonvit_v2.tt.rope import TT_Rope
-from models.experimental.kimi_k3_moonvit_v2.tt.vision_attention import TT_Vision_Attention, logical_length_tensor
+from models.experimental.kimi_k3_moonvit_v2.tt.vision_attention import TT_Vision_Attention
 
 # ATTENTION_GRIDS fit in chip 0's 16,384 rows, so chips 1-3 hold only padding there;
 # `test_vision_attention_full_length` puts real rows on every chip.

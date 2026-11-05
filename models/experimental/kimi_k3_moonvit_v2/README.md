@@ -100,12 +100,15 @@ ignores it.
 ## Tests
 
 ```bash
-# CPU: reference, image and host prep, checkpoint loader, TT module names (device upload stubbed)
+# CPU: reference, image and host prep, checkpoint loader, TT module names (device upload stubbed),
+# the golden generator's helpers, and `assert_quality`
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_image_prep.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_host_prep.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_load_checkpoint.py \
-       models/experimental/kimi_k3_moonvit_v2/tests/test_module.py
+       models/experimental/kimi_k3_moonvit_v2/tests/test_module.py \
+       models/experimental/kimi_k3_moonvit_v2/tests/test_goldens.py \
+       models/experimental/kimi_k3_moonvit_v2/tests/test_quality.py
 
 # Device, one P150: parts that work on each row alone
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
@@ -158,6 +161,3 @@ and the time per replay is logged:
 ```bash
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py -k trace
 ```
-
-Device tests that need a forward are marked `xfail(raises=NotImplementedError, strict=True)`, so
-each starts failing as a reminder once its forward runs.

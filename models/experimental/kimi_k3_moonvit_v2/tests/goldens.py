@@ -28,11 +28,11 @@ Two precisions:
 
 Pixels are `random_patches(config, grid, seed)`. The loop is `MoonViT3dEncoder.forward` with every
 block's output kept: each block gets the arguments `forward` gives it (`reference_rope`).
-`test_goldens.py` checks the loop against `encoder(...)` and the model, and `chunked_attention` against upstream
-`eager_attention`, on small inputs. A run resumes from the last saved block (a finished folder only redoes the final norm and the
-model output). `meta.json` records
-hashes of the checkpoint index, the reference code and `chunked_attention`; `load` refuses a folder
-made from different ones.
+`test_goldens.py` checks the loop against `encoder(...)` and the model, and `chunked_attention`
+against upstream `eager_attention`, on small inputs. A run resumes from the last saved block (a
+finished folder only redoes the final norm and the model output). `meta.json` records hashes of the
+checkpoint index, the reference code and `chunked_attention`; `load` refuses a folder made from
+different ones.
 
     python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens --grid 256x256 [--dtype bf16] [--blocks 1]
 """

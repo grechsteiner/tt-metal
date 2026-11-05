@@ -7,7 +7,8 @@
 `MoonViTConfig` holds the architecture; its defaults are the Kimi-K3 `vision_config`, and
 `from_hf_config` reads the same fields from a checkpoint's `config.json`. `VisionParallel` is the
 mesh layout the TT modules receive, resolved from a sequence-parallel `ParallelFactor` and the
-`TT_CCL` that owns the ring resources (`ccl.py`). This module imports no ttnn at import time, so host prep and the CPU tests can use it.
+`TT_CCL` that owns the ring resources (`ccl.py`). This module imports no ttnn at import time, so host
+prep and the CPU tests can use it.
 """
 
 from __future__ import annotations
@@ -39,9 +40,6 @@ class MoonViTConfig:
     qkv_hidden_size: int = 1536
     in_channels: int = 3
     patch_size: int = 14
-    init_pos_emb_height: int = 64
-    init_pos_emb_width: int = 64
-    init_pos_emb_time: int = 4
     pos_emb_interpolation_mode: str = "bilinear"
     attn_bias: bool = False
     linear_bias: bool = False
@@ -137,9 +135,6 @@ class MoonViTConfig:
             num_attention_heads=vc.get("vt_num_attention_heads", d.num_attention_heads),
             qkv_hidden_size=vc.get("qkv_hidden_size", d.qkv_hidden_size),
             patch_size=vc.get("patch_size", d.patch_size),
-            init_pos_emb_height=vc.get("init_pos_emb_height", d.init_pos_emb_height),
-            init_pos_emb_width=vc.get("init_pos_emb_width", d.init_pos_emb_width),
-            init_pos_emb_time=vc.get("init_pos_emb_time", d.init_pos_emb_time),
             pos_emb_interpolation_mode=vc.get("pos_emb_interpolation_mode", d.pos_emb_interpolation_mode),
             attn_bias=vc.get("attn_bias", d.attn_bias),
             linear_bias=vc.get("linear_bias", d.linear_bias),
