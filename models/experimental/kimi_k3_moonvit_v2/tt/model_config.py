@@ -26,9 +26,12 @@ if TYPE_CHECKING:
     from .ccl import ParallelFactor, TT_CCL
 
 
-# The layout the model targets: the padded sequence split over a ring of RING_SIZE chips. One device
-# without the split runs at most one ring chip's share of it (`resolve_parallel`).
+# The layout the model targets: the padded sequence, RING_MAX_PATCHES rows, split over a ring of
+# RING_SIZE chips. One device without the split runs at most one ring chip's share of it,
+# ONE_DEVICE_MAX_PATCHES rows (`resolve_parallel`).
 RING_SIZE = 4
+RING_MAX_PATCHES = 65536
+ONE_DEVICE_MAX_PATCHES = RING_MAX_PATCHES // RING_SIZE
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,7 @@ class MoonViTConfig:
     in_patch_limit: int = 65536
     # Device row count: every image is padded to `max_patches` rows, and ring attention masks the
     # padding. Images whose grid exceeds it are rejected, never shrunk to fit.
-    max_patches: int = 65536
+    max_patches: int = RING_MAX_PATCHES
     # Patch merger (`sd2_tpool`): each 2x2 window of patches becomes one token.
     merge_kernel_size: tuple[int, int] = (2, 2)
     # Projector (`patchmergerv2`): merged token -> language-model width, then RMSNorm.
@@ -184,10 +187,10 @@ def resolve_parallel(
 ) -> VisionParallel:
     sp = sequence_parallel
     if sp is None or sp.factor == 1:
-        share = MoonViTConfig.max_patches // RING_SIZE
-        if config.max_patches > share:
+        if config.max_patches > ONE_DEVICE_MAX_PATCHES:
             raise ValueError(
-                f"max_patches={config.max_patches} on one device: it runs at most one ring chip's share, {share} rows"
+                f"max_patches={config.max_patches} on one device: it runs at most one ring chip's share, "
+                f"{ONE_DEVICE_MAX_PATCHES} rows"
             )
         return VisionParallel(sp_axis=None, sp_factor=1, ccl=ccl)
     if ccl is None:
