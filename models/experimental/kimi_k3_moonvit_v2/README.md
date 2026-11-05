@@ -140,10 +140,10 @@ full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU golden bu
 Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536
 rows, and each encoder layer on its own, the full 27-layer encoder and the full model (merger and
 projector included) are compared against reference outputs saved once by `tests/goldens.py`. They are fp32, with attention computed in chunks of query
-rows (~1.5 min and ~25 GB of RAM per layer, about 45 min for all 27): the bf16 reference rounds more
-than the device from about layer 9 on, and upstream's eager attention in fp32 would need about 1 TB.
-`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`
-(about 7.3 GB for 256x256 fp32); the tests skip while it is unset or the outputs do not exist:
+rows: the bf16 reference rounds more than the device in deeper layers, and upstream's eager attention
+in fp32 needs more memory than the host has.
+`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`;
+the tests skip while it is unset or the outputs do not exist:
 
 ```bash
 export KIMI_K3_HF_MODEL=/path/to/Kimi-K3

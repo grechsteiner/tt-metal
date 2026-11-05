@@ -7,9 +7,9 @@ its own, the full 27-layer encoder and the full model against reference outputs 
 real weights only.
 
 The reference outputs are fp32 (`goldens.py --dtype fp32`, the default): the bf16 reference's own
-rounding is larger than the device's error from about layer 9 on (layer 18: PCC 0.983 against fp32,
-the device 0.99998). The CPU reference takes ~1.5 min per layer at this length, so it is not
-recomputed here: generate it once with `python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens`.
+rounding is larger than the device's error in deeper layers. The CPU reference is slow at this
+length, so it is not recomputed here: generate it once with
+`python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens`.
 The tests skip when `$MOONVIT_GOLDEN_DIR` is unset, or the saved outputs or the checkpoint are missing.
 
 Every chip holds 16,384 real rows, so besides the PCC over the whole image each chip's quarter
@@ -61,8 +61,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import TT_MoonViT_En
 H, W, SEED = 256, 256, 0
 TRACE_LAYER = 0
 # Against the fp32 outputs, over every row and over each chip's quarter. Relative RMSE is RMS error over
-# the golden's standard deviation; limits as in common.py (measured: layers <= 1.4%, encoder <= 10.5%,
-# model <= 8.4%).
+# the golden's standard deviation; limits as in common.py.
 LAYER_PCC = 0.99
 LAYER_RELATIVE_RMSE = 0.03
 ENCODER_PCC = 0.99

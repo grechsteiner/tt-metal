@@ -185,7 +185,7 @@ RING_TRACE = mesh_params(
 TRACE_WARMUP = 2
 TRACE_ITERATIONS = 10
 
-# ttsim (TT_METAL_SIMULATOR) simulates one chip at about 1/100 of silicon speed, too slow for the
+# ttsim (TT_METAL_SIMULATOR) simulates one chip far slower than silicon, too slow for the
 # full padded length (16,384 rows per chip). Sim tests opt in with `@SIMULATOR`; on ttsim, conftest.py
 # skips every other device test. Each row-wise part has one: one chip, random weights, SIMULATOR_GRID
 # in a config padded to SIMULATOR_ROWS (`simulator_config`), so the chip runs its quarter, 128 rows.

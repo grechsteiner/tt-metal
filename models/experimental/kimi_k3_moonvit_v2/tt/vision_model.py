@@ -159,9 +159,8 @@ class TT_MoonViT_Vision_Model(Module):
         keeps the reference's token order, so no reordering is needed. Without sequence parallelism the
         first replica is kept.
 
-        Each chip's shard is converted on its own and joined with `torch.cat`, about 9x faster than
-        `ttnn.to_torch` with a mesh composer (full size: ~0.2 s against ~2 s). Chips that hold only
-        padding are skipped."""
+        Each chip's shard is converted on its own and joined with `torch.cat`, which is faster than
+        `ttnn.to_torch` with a mesh composer. Chips that hold only padding are skipped."""
         sp_axis = self.parallel.sp_axis
         mesh_cols = self.mesh_device.shape[1]
         shards = ttnn.get_device_tensors(ttnn.from_device(out))  # row-major over the mesh

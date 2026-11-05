@@ -66,8 +66,8 @@ class TT_Patch_Embed(Module):
         """patches [1, 1, S/sp, padded_patch_dim] bf16 row major, pos_emb [1, 1, S/sp, hidden] fp32 ->
         [1, 1, S/sp, hidden] fp32, the encoder's fp32 residual stream.
 
-        `patches` is uploaded row major and tiled here: tiling on the host costs ~100 ms at full size,
-        on device it is lost in the noise. `patches` and `pos_emb` are left allocated: they are the
+        `patches` is uploaded row major and tiled here: tiling is faster on device than on
+        the host. `patches` and `pos_emb` are left allocated: they are the
         caller's (per-image `DeviceInput`s in the full model)."""
         if patches.layout != ttnn.ROW_MAJOR_LAYOUT:
             raise ValueError(f"patches must be row major, got {patches.layout}")

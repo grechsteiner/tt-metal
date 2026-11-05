@@ -17,14 +17,12 @@ Two precisions:
 
 - `fp32` (default, `<grid>-seed<seed>-fp32`): the reference model cast to fp32, with attention
   computed `CHUNK_SIZE` query rows at a time (`chunked_attention`). The device tests compare against
-  these. Upstream's eager attention holds several 12 x L x L tensors at once: ~510 GB measured in
-  bf16, roughly twice that in fp32, more than the host has; chunks need ~25 GB. The norms keep the
-  bf16 model's eps (2^-7): upstream `nn.RMSNorm(eps=None)` takes eps from the input dtype, so fp32
-  would otherwise change the model, not only the precision.
+  these. Upstream's eager attention holds several 12 x L x L tensors at once, more than the host
+  has. The norms keep the bf16 model's eps (2^-7): upstream `nn.RMSNorm(eps=None)` takes eps from
+  the input dtype, so fp32 would otherwise change the model, not only the precision.
 - `bf16` (`<grid>-seed<seed>`): the reference as it runs, bf16 with upstream eager attention. Its
   own rounding (bf16 attention probabilities and residual stream) is large where activations are
-  large: at full size, layer 18 has PCC 0.983 against fp32, while the device has 0.99998. After
-  the projector it is worse: on a 64x64 image the bf16 model's output has PCC 0.848 against fp32.
+  large: in deeper layers it is larger than the device's error, and after the projector it is worse.
 
 Pixels are `random_patches(config, grid, seed)`. The loop is `MoonViT3dEncoder.forward` with every
 block's output kept: each block gets the arguments `forward` gives it (`reference_rope`).

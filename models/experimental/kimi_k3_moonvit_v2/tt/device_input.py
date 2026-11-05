@@ -54,7 +54,7 @@ class DeviceInput:
         """Fill the tensor with `value` (any shape with `prod(shape)` elements) and return it.
 
         A float `value` is cast to the device dtype in torch first: ttnn's own fp32 -> bf16 conversion
-        is much slower (full-size patches: ~350 ms against ~11 ms for the cast)."""
+        is much slower."""
         value = value.reshape(self.shape)
         torch_dtype = _TORCH_FLOAT_DTYPES.get(self.dtype)
         if torch_dtype is not None and value.is_floating_point():
