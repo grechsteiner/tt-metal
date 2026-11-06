@@ -85,7 +85,7 @@ def padding_layout_grid(size: str) -> list[tuple[int, int, int]]:
     return [(1, h, w)]
 
 
-# Full-length attention and block tests: the ring runs the production padded length (`max_patches`)
+# Attention and block tests with real rows on every chip: the ring runs the production padded length (`max_patches`)
 # on a PADDING_LAYOUT_SIZES image with real rows on every chip. The CPU golden at that length is too slow for
 # every query row, so it computes SAMPLED_ROWS_PER_CHIP query rows of each chip, each against every key
 # (`goldens.use_sampled_attention`), and each chip's rows are checked on their own.

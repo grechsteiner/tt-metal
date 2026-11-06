@@ -148,8 +148,8 @@ def test_one_device_runs_at_most_a_ring_chips_share(config, expect_error):
 
 
 @REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS
-def test_full_length_sampled_rows(config, size):
-    """The full-length grids put real rows on every ring chip, and `sampled_rows` takes
+def test_real_rows_from_each_chip_sampled_rows(config, size):
+    """The REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS sizes put real rows on every ring chip, and `sampled_rows` takes
     SAMPLED_ROWS_PER_CHIP distinct real rows of each chip, its first and last real rows among them (on
     `partial`, the last chip's end inside a tile)."""
     (grid,) = padding_layout_grid(size)

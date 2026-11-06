@@ -88,9 +88,9 @@ def test_fp32_chunked_encoder_matches_eager(config, reference):
 
 @SYNTHETIC
 def test_sampled_attention_matches_eager(config, reference):
-    """A block run with `use_sampled_attention`, as the full-length device tests build their golden,
-    equals the same fp32 block with upstream eager attention on the sampled rows, over several query
-    chunks; the rows not sampled are left out of the attention."""
+    """A block run with `use_sampled_attention`, as the device tests with real rows on every chip
+    build their golden, equals the same fp32 block with upstream eager attention on the sampled rows,
+    over several query chunks; the rows not sampled are left out of the attention."""
     reference = to_fp32(copy.deepcopy(reference))
     block = reference.vision_tower.encoder.blocks[0]
     grid_thws = torch.tensor([(1, 40, 52)])

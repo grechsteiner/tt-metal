@@ -37,7 +37,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt.rope import TT_Rope
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_attention import TT_Vision_Attention
 
 # ATTENTION_GRIDS fit in chip 0's 16,384 rows, so chips 1-3 hold only padding there;
-# `test_vision_attention_full_length` puts real rows on every chip.
+# `test_vision_attention_real_rows_from_each_chip` puts real rows on every chip.
 
 
 @RING
@@ -73,7 +73,7 @@ def test_vision_attention(mesh_device, sp_axis, num_links, config, reference, gr
 @REAL
 @SAMPLED_LAYERS
 @REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS
-def test_vision_attention_full_length(mesh_device, sp_axis, num_links, config, reference, size, layer):
+def test_vision_attention_real_rows_from_each_chip(mesh_device, sp_axis, num_links, config, reference, size, layer):
     """The ring at the production padded length (`max_patches`), on an image with real rows on every
     chip. The fp32 golden covers `sampled_rows` of each chip only, each against every key
     (`use_sampled_attention`), and each chip's rows are checked on their own."""

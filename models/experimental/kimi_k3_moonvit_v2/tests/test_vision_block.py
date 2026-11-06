@@ -71,7 +71,7 @@ def test_vision_block(mesh_device, sp_axis, num_links, config, reference, grid, 
 @REAL
 @SAMPLED_LAYERS
 @REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS
-def test_vision_block_full_length(mesh_device, sp_axis, num_links, config, reference, size, layer):
+def test_vision_block_real_rows_from_each_chip(mesh_device, sp_axis, num_links, config, reference, size, layer):
     """The ring at the production padded length (`max_patches`), on an image with real rows on every
     chip. The fp32 golden covers `sampled_rows` of each chip only, each against every key
     (`use_sampled_attention`), and each chip's rows are checked on their own."""
