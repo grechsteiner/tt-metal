@@ -44,11 +44,8 @@ use `models.common.utility_functions`.
 
 ## Torch and ttnn
 
-The TT modules are `tt/module.py` `Module`s whose children carry the reference's names, so each
-loads the matching reference `state_dict()` with `load_torch_state_dict`. `load_cached` caches the
-loaded weights as `.tensorbin` files. Tests build both, run the same input, and compare with
-`assert_quality` (`tests/common.py`): PCC (`comp_pcc`) and relative RMSE (RMS error over the reference's
-standard deviation) are asserted; CCC and the largest element differences are logged.
+Each TT module's children use the reference's names, so it loads the reference's `state_dict()`
+directly with `load_torch_state_dict`. `load_cached` caches the loaded weights as `.tensorbin` files.
 
 ```python
 ccl = TT_CCL(mesh_device, num_links=2, topology=ttnn.Topology.Ring)
@@ -58,22 +55,18 @@ pixel_values, grid_thws = image_to_patches(Image.open(path), config)  # tt/image
 out = tt_model.run(pixel_values, grid_thws)  # (h*w, 3, 14, 14), [[1, h, w]] -> (h*w/4, 7168)
 ```
 
-Image limit: an image is accepted when the HF processor's grid fits `max_patches` (65,536 patches).
-That rejects nearly every image over about 12.8 MP, and some smaller ones that the 28 px padding
-pushes over (3590x3590 -> 258x258). Over-limit images are rejected, never shrunk, because shrinking
-would diverge from HF. Only RGB images are accepted; other modes (including anything with
-transparency, which HF composites onto a chessboard) raise `ValueError`.
+Images must be RGB; other modes raise `ValueError`. An image whose HF grid exceeds `max_patches`
+(65,536 patches) is rejected, never shrunk, since shrinking would diverge from HF. That is roughly
+anything over 12.8 MP, plus some smaller images the 28 px padding pushes over (3590x3590 -> 258x258).
 
-TODO (image pre-processing, `tt/image_prep.py`):
+TODO (`tt/image_prep.py`):
 
-- Handle non-RGB images as HF does, instead of rejecting them: convert other modes to RGB *after*
-  the resize (Pillow resizes P and 1 with nearest neighbour and RGBA with premultiplied alpha, so
-  converting first does not match HF). Test against `reference/kimi_k3_vision_processing.py` for
-  RGBA, LA, PA, L, P, 1, CMYK and I;16.
-- Handle `transparent_bg_config` and `transparent_bg_fill_stage` (`reference/preprocessor_config.json`):
-  composite images with alpha (RGBA, LA, PA, and P or L with `tRNS`) onto an 8 px chessboard
-  (white 255, gray 180, white square top left), after the resize and before the black pad. Read the
-  values from the config rather than hard-coding them.
+- Support non-RGB modes as HF does: convert to RGB *after* the resize (Pillow resizes P and 1 with
+  nearest neighbour and RGBA with premultiplied alpha, so converting first does not match HF). Test
+  against `reference/kimi_k3_vision_processing.py` for RGBA, LA, PA, L, P, 1, CMYK and I;16.
+- Support `transparent_bg_config` and `transparent_bg_fill_stage` (`reference/preprocessor_config.json`):
+  composite images with alpha (RGBA, LA, PA, and P or L with `tRNS`) onto HF's chessboard after the
+  resize and before the black pad, with the values read from the config.
 
 ## Weights
 
@@ -98,9 +91,12 @@ ignores it.
 
 ## Tests
 
+Each test runs a TT module and the reference on the same input and compares them with
+`assert_quality` (`tests/common.py`): PCC and relative RMSE (RMS error over the reference's standard
+deviation) are asserted, CCC and the largest differences are logged.
+
 ```bash
-# CPU: reference, image and host prep, checkpoint loader, TT module names (device upload stubbed),
-# the golden generator's helpers, and `assert_quality`
+# CPU
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_image_prep.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_host_prep.py \
@@ -109,7 +105,7 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_goldens.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_quality.py
 
-# Device, one P150: parts that work on each row alone
+# Device, one P150: the parts that work on each row alone
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rms_norm.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_rope.py \
@@ -118,47 +114,33 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_patch_merger.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_projector.py
 
-# Device, a LoudBox: attention needs the ring
+# Device, LoudBox ring: everything with attention
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_vision_attention.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_block.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_model.py
-```
 
-Only tests with attention in them (attention, block, full model, full size) run on the ring
-(`ring1x4`); pytest skips them when the machine has fewer chips. The row-wise tests run on one P150
-(`p150`), which stands in for one chip of the ring: it gets that chip's quarter of the padded
-sequence (16,384 rows), cut out by `MeshRows` (`tests/common.py`).
-
-Image sizes (`tests/common.py`):
-
-- Row-wise tests (`PADDING_LAYOUT_GRIDS`): `full` (256x256) and `max_side` (512x128) fill the padded
-  length exactly, `partial` (250x250) ends inside a tile, and `small` (40x100) is almost all padding.
-  The P150 runs the quarter of the last ring chip that holds real rows (chip 0 for `small`, chip 3
-  for the others), and the CPU golden covers that quarter's real rows. Nothing there scales with the
-  square of the length, so the golden takes seconds.
-- Attention, the block and the full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU
-  golden builds L x L scores per head. All their real rows are on chip 0; chips 1-3 hold only padding.
-- Attention and the block with real rows on every chip (`REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS`:
-  `full`, `max_side`, `partial`; the `*_real_rows_from_each_chip` tests): the fp32 golden covers
-  `SAMPLED_ROWS_PER_CHIP` query rows of each chip (`sampled_rows`), each against every key, and each
-  chip's rows are checked on their own.
-
-Simulator (ttsim, `TT_METAL_SIMULATOR` set): each row-wise test has a `_small` variant marked
-`simulator` that runs `SIMULATOR_GRID` (6x20) in a config padded to `SIMULATOR_ROWS` (512), so the
-chip runs a 128-row quarter. On ttsim, every other device test is skipped. The `_small` tests also run
-on hardware:
-
-```bash
+# Simulator (ttsim): the `_small` variants of the row-wise tests; also run on hardware.
+# With TT_METAL_SIMULATOR set, every other device test is skipped.
 pytest models/experimental/kimi_k3_moonvit_v2/tests -m simulator
 ```
 
-Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536 rows,
-and each encoder layer on its own, the full 27-layer encoder and the full model (merger and
-projector included) are compared against reference outputs saved once by `tests/goldens.py`. They
-are fp32, with attention computed in chunks of query rows: the bf16 reference rounds more than the
-device in deeper layers, and upstream's eager attention in fp32 needs more memory than the host has.
-`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`; the
-tests skip while it is unset or the outputs do not exist:
+Ring tests (`ring1x4`) skip on machines with fewer chips. Row-wise tests run on one P150 (`p150`)
+standing in for one ring chip: it runs that chip's 16,384-row quarter of the padded sequence
+(`MeshRows`).
+
+Image sizes (`tests/common.py`):
+
+| Tag | Used by | Images | Golden |
+|---|---|---|---|
+| `PADDING_LAYOUT_GRIDS` | Row-wise tests | `full` 256x256 and `max_side` 512x128 fill the padded length, `partial` 250x250 ends inside a tile, `small` 40x100 is mostly padding | The real rows of the quarter the P150 runs (the last ring chip holding real rows) |
+| `ATTENTION_GRIDS` | Attention, block, full model | 64x64, 40x100; all real rows on chip 0 | Every row; kept small because the golden builds L x L scores |
+| `REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS` | `*_real_rows_from_each_chip` attention and block tests | `full`, `max_side`, `partial` | fp32 on `SAMPLED_ROWS_PER_CHIP` rows of each chip, checked chip by chip |
+| `SIMULATOR_GRID` | `_small` tests | 6x20 in a config padded to 512 rows (128 per chip) | Every row |
+
+Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536 rows.
+Each layer, the full encoder and the full model are compared against reference outputs saved once
+by `tests/goldens.py`. They are fp32 because the bf16 reference rounds more than the device in
+deeper layers. The tests skip until the outputs exist:
 
 ```bash
 export KIMI_K3_HF_MODEL=/path/to/Kimi-K3
@@ -167,13 +149,9 @@ python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens --grid 256x256   
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py
 ```
 
-Traced perf tests, full size only (`test_full_size_layer_trace` for one layer,
-`test_full_size_encoder_trace` for patch embed and encoder, `test_full_size_model_trace` for the full
-model): the forward runs once untraced, then is captured in one trace (`Trace` in
-`tests/common.py`). The first replay must equal the untraced run exactly and pass the untraced
-test's checks. Then `TRACE_WARMUP` untimed and `TRACE_ITERATIONS` timed replays run back to back with
-one wait at the end, and the time per replay is logged. The model test also logs one host-in,
-host-out run (host prep, input writes, replay, gather):
+The `_trace` variants (layer, encoder, model) capture the same forward in a trace, require the first
+replay to match the untraced run exactly, then log the time per replay. The model one also logs a
+host-in, host-out run.
 
 ```bash
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py -k trace
