@@ -26,11 +26,13 @@ if TYPE_CHECKING:
     from .ccl import ParallelFactor, TT_CCL
 
 
+# The processor's `in_patch_limit` (`preprocessor_config.json`).
+IN_PATCH_LIMIT = 65536
 # The layout the model targets: the padded sequence, RING_MAX_PATCHES rows, split over a ring of
-# RING_SIZE chips. One device without the split runs at most one ring chip's share of it,
-# ONE_DEVICE_MAX_PATCHES rows (`resolve_parallel`).
+# RING_SIZE chips. The padded length is the processor's patch limit. One device without the split
+# runs at most one ring chip's share of it, ONE_DEVICE_MAX_PATCHES rows (`resolve_parallel`).
 RING_SIZE = 4
-RING_MAX_PATCHES = 65536
+RING_MAX_PATCHES = IN_PATCH_LIMIT
 ONE_DEVICE_MAX_PATCHES = RING_MAX_PATCHES // RING_SIZE
 
 
@@ -53,7 +55,7 @@ class MoonViTConfig:
     # Processor (`preprocessor_config.json`): `patch_limit_on_one_side` (also the RoPE table size) and
     # `in_patch_limit`, which only sets the resize (`image_prep.resize_plan`).
     max_side_patches: int = 512
-    in_patch_limit: int = 65536
+    in_patch_limit: int = IN_PATCH_LIMIT
     # Device row count: every image is padded to `max_patches` rows, and ring attention masks the
     # padding. Images whose grid exceeds it are rejected, never shrunk to fit.
     max_patches: int = RING_MAX_PATCHES
