@@ -85,10 +85,10 @@ def padding_layout_grid(size: str) -> list[tuple[int, int, int]]:
     return [(1, h, w)]
 
 
-# Attention and block tests with real rows on every chip: the ring runs the production padded length (`max_patches`)
-# on a PADDING_LAYOUT_SIZES image with real rows on every chip. The CPU golden at that length is too slow for
-# every query row, so it computes SAMPLED_ROWS_PER_CHIP query rows of each chip, each against every key
-# (`goldens.use_sampled_attention`), and each chip's rows are checked on their own.
+# Attention and block tests with real rows on every chip: the ring runs the production padded length
+# (`max_patches`) on a PADDING_LAYOUT_SIZES image with real rows on every chip. The CPU golden at that
+# length is too slow for every query row, so it computes SAMPLED_ROWS_PER_CHIP query rows of each chip,
+# each against every key (`goldens.use_sampled_attention`), and each chip's rows are checked on their own.
 REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS = pytest.mark.parametrize("size", ["full", "max_side", "partial"])
 SAMPLED_ROWS_PER_CHIP = 256
 
@@ -113,6 +113,11 @@ def sampled_rows(n: int, rows: int, per_chip: int = SAMPLED_ROWS_PER_CHIP, seed:
     return chips
 
 
+def _label(label: str) -> str:
+    """`label`, or the running test's id when it is empty."""
+    return label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
+
+
 def assert_quality_per_chip(
     golden: torch.Tensor,
     actual: torch.Tensor,
@@ -124,7 +129,7 @@ def assert_quality_per_chip(
     """`assert_quality` on each chip's rows (`chips`, as `sampled_rows` gives them) of `golden` and
     `actual`, both window order. Every chip is checked and logged before any failure is raised, so a
     wrong chip cannot hide behind three right ones."""
-    label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
+    label = _label(label)
     parts = []
     for chip, rows in enumerate(chips):
         assert len(rows), f"{label}: chip {chip} holds no real rows"
@@ -152,32 +157,31 @@ def assert_quality_parts(
 LOUDBOX_SHAPE = (2, RING_SIZE)
 RING_FABRIC = {"fabric_config": ttnn.FabricConfig.FABRIC_2D_TORUS_X}
 RING_NUM_LINKS = 2
-RING4 = pytest.param((1, RING_SIZE), 1, RING_NUM_LINKS, RING_FABRIC, id="ring1x4")
-# One P150 standing in for one chip of that ring: it runs that chip's quarter of the padded sequence
-# (`device_config`, `MeshRows`), never the whole of it.
-P150_CHIP = pytest.param((1, 1), None, 1, {}, id="p150")
+# Traced tests (`Trace`) set aside this much DRAM for the captured commands.
+TRACE_REGION_SIZE = 100_000_000
 
 
-def mesh_params(*params):
+def mesh_params(shape: tuple[int, int], sp_axis: int | None, num_links: int, device_params: dict, id: str):
+    """Run a test on one mesh: parametrizes `mesh_device`, `sp_axis`, `num_links` and `device_params`."""
     return pytest.mark.parametrize(
         ("mesh_device", "sp_axis", "num_links", "device_params"),
-        list(params),
+        [pytest.param(shape, sp_axis, num_links, device_params, id=id)],
         indirect=["mesh_device", "device_params"],
     )
 
 
-# Attention needs the ring, so only tests with attention in them use it. Parts that work on each row
-# alone run on one P150.
-RING = mesh_params(RING4)
-P150 = mesh_params(P150_CHIP)
+def ring_params(**device_params):
+    """The ring, with `device_params` added to its fabric config."""
+    return mesh_params((1, RING_SIZE), 1, RING_NUM_LINKS, {**RING_FABRIC, **device_params}, "ring1x4")
 
-# Traced tests (`Trace`): the ring with DRAM set aside for the captured commands.
-TRACE_REGION_SIZE = 100_000_000
-RING_TRACE = mesh_params(
-    pytest.param(
-        (1, RING_SIZE), 1, RING_NUM_LINKS, {**RING_FABRIC, "trace_region_size": TRACE_REGION_SIZE}, id="ring1x4"
-    )
-)
+
+# Attention needs the ring, so only tests with attention in them use it. Parts that work on each row
+# alone run on one P150, standing in for one chip of the ring: it runs that chip's quarter of the
+# padded sequence (`device_config`, `MeshRows`), never the whole of it.
+RING = ring_params()
+RING_TRACE = ring_params(trace_region_size=TRACE_REGION_SIZE)
+P150 = mesh_params((1, 1), None, 1, {}, "p150")
+
 # Untimed replays, then timed ones (`Trace.time_replays`).
 TRACE_WARMUP = 2
 TRACE_ITERATIONS = 10
@@ -283,7 +287,7 @@ def assert_quality(
     differences are logged, not asserted. Each test's relative RMSE limit is about twice the largest
     value measured on Blackhole over its cases (random and checkpoint weights, both meshes), rounded
     up. `relative_rmse=None` logs it without asserting it."""
-    label = label or os.environ.get("PYTEST_CURRENT_TEST", "quality").split(" ")[0]
+    label = _label(label)
     q = quality(golden, actual)
     logger.info(f"{label}: {format_quality(q)}")
     failures = quality_failures(q, pcc, relative_rmse)
