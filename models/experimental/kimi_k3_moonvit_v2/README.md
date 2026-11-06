@@ -20,8 +20,8 @@ Activations are bf16 except the encoder's residual stream, which is fp32 (`tt/vi
 ## Structure
 
 The TT code depends only on `ttnn` and `torch` (plus numpy and Pillow in `tt/image_prep.py`), and
-imports nothing from `reference/`. The reference
-needs `transformers`, as upstream does; tests also use `models.common.utility_functions`.
+imports nothing from `reference/`. The reference needs `transformers`, as upstream does; tests also
+use `models.common.utility_functions`.
 
 | Path | Contents |
 |---|---|
@@ -40,7 +40,7 @@ needs `transformers`, as upstream does; tests also use `models.common.utility_fu
 | `tt/patch_embed.py`, `rope.py`, `vision_attention.py`, `vision_mlp.py`, `vision_block.py` | One TT module per encoder part |
 | `tt/patch_merger.py`, `tt/projector.py` | `TT_Patch_Merger` (no weights) and `TT_Projector` |
 | `tt/vision_model.py` | `TT_MoonViT_Vision_Tower` (patch embed, encoder, merger) and `TT_MoonViT_Vision_Model` (tower, projector) |
-| `tests/` | `common.py` and `conftest.py`, CPU tests for the reference and host prep, one device test per part |
+| `tests/` | `common.py` and `conftest.py`, CPU tests for the reference and host prep, one device test per part, the full-size tests, and `goldens.py`, which saves their reference outputs |
 
 ## Torch and ttnn
 
@@ -77,8 +77,8 @@ TODO (image pre-processing, `tt/image_prep.py`):
 
 ## Weights
 
-The `reference` fixture in `tests/conftest.py` builds with the weights a test's marks ask for. A test with
-`@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
+The `reference` fixture in `tests/conftest.py` builds with the weights a test's marks ask for. A test
+with `@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
 once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights). CPU tests
 use random weights only (`test_load_checkpoint.py` reads the checkpoint itself). Device tests use the
 checkpoint only for attention, the MLP, the projector and what contains them (block, full model,
@@ -86,10 +86,10 @@ full size); the other device tests use random weights only:
 
 - `synthetic`: the reference initialized under `torch.manual_seed(0)`, with norm weights drawn around
   one so a norm that fails to load shows up.
-- `real`: the vision tower and projector of the checkpoint at `KIMI_K3_HF_MODEL`. The
-  loader opens only the shards holding `vision_tower.*` and `mm_projector.*` keys, so a folder with `model.safetensors.index.json`,
-  `config.json`, `model-00095-of-000096.safetensors` and `model-00096-of-000096.safetensors` is
-  enough. These cases skip when the variable is unset.
+- `real`: the vision tower and projector of the checkpoint at `KIMI_K3_HF_MODEL`. The loader opens
+  only the shards holding `vision_tower.*` and `mm_projector.*` keys, so a folder with
+  `model.safetensors.index.json`, `config.json`, `model-00095-of-000096.safetensors` and
+  `model-00096-of-000096.safetensors` is enough. These cases skip when the variable is unset.
 
 Per-layer tests take a `layer` parameter, set apart from the weights: `@SAMPLED_LAYERS` (layers 0,
 13 and 26; attention, MLP, block, encoder linears and norms) or `@ALL_LAYERS` (the full-size layer
@@ -126,23 +126,39 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_vision_attention.py \
 
 Only tests with attention in them (attention, block, full model, full size) run on the ring
 (`ring1x4`); pytest skips them when the machine has fewer chips. The row-wise tests run on one P150
-(`p150`), which stands in for one chip of the ring and gets one quarter of the padded sequence
-(16,384 rows).
+(`p150`), which stands in for one chip of the ring: it gets that chip's quarter of the padded
+sequence (16,384 rows), cut out by `MeshRows` (`tests/common.py`).
 
-Image sizes (`tests/common.py`): the row-wise tests (`PADDING_LAYOUT_GRIDS`) compare against a CPU golden of
-the full padded length, which takes seconds since nothing there scales with the square of the
-length. Each size has one grid per mesh: `full` (256x256 on the ring, 128x128 on one chip) and
-`max_side` (512x128, 512x32) fill the padded length exactly, `partial` (250x250, 122x130) ends
-inside a tile, and `small` (40x100) is almost all padding. Attention, the block and the
-full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU golden builds L x L scores per head.
+Image sizes (`tests/common.py`):
 
-Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536
-rows, and each encoder layer on its own, the full 27-layer encoder and the full model (merger and
-projector included) are compared against reference outputs saved once by `tests/goldens.py`. They are fp32, with attention computed in chunks of query
-rows: the bf16 reference rounds more than the device in deeper layers, and upstream's eager attention
-in fp32 needs more memory than the host has.
-`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`;
-the tests skip while it is unset or the outputs do not exist:
+- Row-wise tests (`PADDING_LAYOUT_GRIDS`): `full` (256x256) and `max_side` (512x128) fill the padded
+  length exactly, `partial` (250x250) ends inside a tile, and `small` (40x100) is almost all padding.
+  The P150 runs the quarter of the last ring chip that holds real rows (chip 0 for `small`, chip 3
+  for the others), and the CPU golden covers that quarter's real rows. Nothing there scales with the
+  square of the length, so the golden takes seconds.
+- Attention, the block and the full model (`ATTENTION_GRIDS`, 64x64 and 40x100) stay small: their CPU
+  golden builds L x L scores per head. All their real rows are on chip 0; chips 1-3 hold only padding.
+- Attention and the block with real rows on every chip (`REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS`:
+  `full`, `max_side`, `partial`; the `*_real_rows_from_each_chip` tests): the fp32 golden covers
+  `SAMPLED_ROWS_PER_CHIP` query rows of each chip (`sampled_rows`), each against every key, and each
+  chip's rows are checked on their own.
+
+Simulator (ttsim, `TT_METAL_SIMULATOR` set): each row-wise test has a `_small` variant marked
+`simulator` that runs `SIMULATOR_GRID` (6x20) in a config padded to `SIMULATOR_ROWS` (512), so the
+chip runs a 128-row quarter. On ttsim, every other device test is skipped. The `_small` tests also run
+on hardware:
+
+```bash
+pytest models/experimental/kimi_k3_moonvit_v2/tests -m simulator
+```
+
+Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image fills all 65,536 rows,
+and each encoder layer on its own, the full 27-layer encoder and the full model (merger and
+projector included) are compared against reference outputs saved once by `tests/goldens.py`. They
+are fp32, with attention computed in chunks of query rows: the bf16 reference rounds more than the
+device in deeper layers, and upstream's eager attention in fp32 needs more memory than the host has.
+`--dtype bf16` writes the bf16 eager reference instead. The outputs go in `$MOONVIT_GOLDEN_DIR`; the
+tests skip while it is unset or the outputs do not exist:
 
 ```bash
 export KIMI_K3_HF_MODEL=/path/to/Kimi-K3
@@ -152,10 +168,12 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py
 ```
 
 Traced perf tests, full size only (`test_full_size_layer_trace` for one layer,
-`test_full_size_encoder_trace`): the forward runs once untraced, then is captured in one trace
-(`Trace` in `tests/common.py`). The first replay must equal the untraced run exactly and pass the
-untraced test's checks. Then `TRACE_ITERATIONS` replays run back to back with one wait at the end,
-and the time per replay is logged:
+`test_full_size_encoder_trace` for patch embed and encoder, `test_full_size_model_trace` for the full
+model): the forward runs once untraced, then is captured in one trace (`Trace` in
+`tests/common.py`). The first replay must equal the untraced run exactly and pass the untraced
+test's checks. Then `TRACE_WARMUP` untimed and `TRACE_ITERATIONS` timed replays run back to back with
+one wait at the end, and the time per replay is logged. The model test also logs one host-in,
+host-out run (host prep, input writes, replay, gather):
 
 ```bash
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py -k trace
