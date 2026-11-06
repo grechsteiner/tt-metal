@@ -99,7 +99,7 @@ def mesh_device(request, device_params):
 
 @pytest.fixture(scope="session")
 def config() -> MoonViTConfig:
-    """Every layer, from the checkpoint's `config.json` when $KIMI_K3_HF_MODEL is set."""
+    """From the checkpoint's `config.json` when $KIMI_K3_HF_MODEL is set, else the K3 defaults."""
     path = checkpoint_path()
     return MoonViTConfig.from_hf_config(path) if path is not None else MoonViTConfig()
 
