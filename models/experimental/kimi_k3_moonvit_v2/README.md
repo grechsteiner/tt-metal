@@ -1,37 +1,30 @@
 # Kimi-K3 MoonViT-V2 vision encoder
 
-The vision path of [Kimi-K3](https://huggingface.co/moonshotai/Kimi-K3): patch embedding,
-27 encoder blocks, the final norm, the 2x2 patch merger and the projector into the language
-model's width (7168).
+The vision path of [Kimi-K3](https://huggingface.co/moonshotai/Kimi-K3): patch embedding (14x14 px
+patches), 27 encoder blocks, the final norm, the 2x2 patch merger and the projector to the language
+model's width (7168). One still image per call; no packing, no video.
 
-Scope: one still image per call. No packing, no video. The encoder takes 14x14 px patches; the
-merger turns each 2x2 window into one 28 px token, and the projector maps it to a language-model
-embedding.
-
-Target layout: 4 Blackhole chips in a ring along mesh axis 1 (`(1, 4)` mesh, 2 links). On a LoudBox
-(8 chips, 2x4) that is one row; the tests open all 8 chips and run on the first row
-(`tests/conftest.py`), with `FABRIC_2D_TORUS_X`.
-Each image's patches are put in window order (each 2x2 merge window's four patches consecutive),
-padded to 65,536 rows and split along the ring, so the merger is a reshape on each chip. Attention is
-ring attention with the padding masked; norms, MLP, merger and projector are sequence parallel.
-Weights are bf16 and replicated, activations DRAM interleaved, matmuls HiFi4 with fp32 accumulation.
-Activations are bf16 except the encoder's residual stream, which is fp32 (`tt/vision_block.py`).
+Layout: a ring of 4 Blackhole chips along mesh axis 1 (`(1, 4)` mesh, 2 links, `FABRIC_2D_TORUS_X`);
+on a LoudBox (2x4) the tests use the first row. Patches are put in window order (each 2x2 merge
+window's four patches consecutive), padded to 65,536 rows and split along the ring, so the merger is a
+reshape on each chip. Attention is ring attention with the padding masked; everything else is
+sequence parallel. Weights are bf16 and replicated. Activations are bf16 in DRAM, except the encoder's
+residual stream, which is fp32 (`tt/vision_block.py`). Matmuls are HiFi4 with fp32 accumulation.
 
 ## Structure
 
-The TT code depends only on `ttnn` and `torch` (plus numpy and Pillow in `tt/image_prep.py`), and
-imports nothing from `reference/`. The reference needs `transformers`, as upstream does; tests also
-use `models.common.utility_functions`.
+The TT code needs only `ttnn` and `torch` (plus numpy and Pillow in `tt/image_prep.py`) and imports
+nothing from `reference/`. The reference needs `transformers`.
 
 | Path | Contents |
 |---|---|
 | `reference/modeling_kimi_k3.py`, `reference/configuration_kimi_k3.py` | Copied from [moonshotai/Kimi-K3](https://huggingface.co/moonshotai/Kimi-K3); the language model is removed |
-| `reference/kimi_k3_vision.py` | `KimiK3VisionModel`: the vision path of `KimiK3ForConditionalGeneration` (tower, then `mm_projector`), and `load_vision_config`, which selects upstream's `eager` attention |
+| `reference/kimi_k3_vision.py` | `KimiK3VisionModel` (upstream's vision tower, then `mm_projector`) and `load_vision_config` (selects upstream's `eager` attention) |
 | `reference/checkpoint.py` | Reads `vision_tower.*` and `mm_projector.*` from a Kimi-K3 HF checkpoint |
 | `reference/config.json`, `LICENSE-Kimi-K3` | The K3 `vision_config` and the upstream license |
-| `reference/media_utils.py`, `reference/kimi_k3_vision_processing.py`, `reference/preprocessor_config.json` | Upstream's image processor and its config, copied: the golden for `tt/image_prep.py` |
-| `tt/image_prep.py` | A PIL image to `(pixel_values, grid_thws)` as the HF processor makes them: resize, black padding to a multiple of 28 px, normalize, patchify |
-| `tt/host_prep.py` | Host prep for the device, torch only: patch rows, position embeddings, RoPE cos/sin, window order, padding to `max_patches` rows |
+| `reference/media_utils.py`, `reference/kimi_k3_vision_processing.py`, `reference/preprocessor_config.json` | Upstream's image processor and its config; the golden for `tt/image_prep.py` |
+| `tt/image_prep.py` | PIL image to `(pixel_values, grid_thws)`, matching the HF processor: resize, black padding to a multiple of 28 px, normalize, patchify |
+| `tt/host_prep.py` | Device inputs built on the host: patch rows, position embeddings, RoPE cos/sin, window order, padding to `max_patches` rows |
 | `tt/model_config.py` | `MoonViTConfig`, the grid check, `VisionParallel`, the compute kernel config |
 | `tt/module.py` | `Module`, `ModuleList`, `Parameter`, state-dict loading, `save`/`load`, `load_cached` |
 | `tt/linear.py`, `tt/rms_norm.py` | The leaf layers |
@@ -40,7 +33,7 @@ use `models.common.utility_functions`.
 | `tt/patch_embed.py`, `rope.py`, `vision_attention.py`, `vision_mlp.py`, `vision_block.py` | One TT module per encoder part |
 | `tt/patch_merger.py`, `tt/projector.py` | `TT_Patch_Merger` (no weights) and `TT_Projector` |
 | `tt/vision_model.py` | `TT_MoonViT_Vision_Tower` (patch embed, encoder, merger) and `TT_MoonViT_Vision_Model` (tower, projector) |
-| `tests/` | `common.py` and `conftest.py`, CPU tests for the reference and host prep, one device test per part, the full-size tests, and `goldens.py`, which saves their reference outputs |
+| `tests/` | Shared helpers (`common.py`, `conftest.py`), CPU tests, one device test file per part, the full-size tests, and `goldens.py` (their saved reference outputs) |
 
 ## Torch and ttnn
 
@@ -70,24 +63,22 @@ TODO (`tt/image_prep.py`):
 
 ## Weights
 
-The `reference` fixture in `tests/conftest.py` builds with the weights a test's marks ask for. A test
-with `@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
-once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights). CPU tests
-use random weights only (`test_load_checkpoint.py` reads the checkpoint itself). Device tests use the
-checkpoint only for attention, the MLP, the projector and what contains them (block, full model,
-full size); the other device tests use random weights only:
+Tests that build the `reference` fixture are marked `@SYNTHETIC`, `@REAL` or both, and run once per
+mark (ids `synthetic` and `real`; select with `-m synthetic` or `-m real`):
 
-- `synthetic`: the reference initialized under `torch.manual_seed(0)`, with norm weights drawn around
-  one so a norm that fails to load shows up.
-- `real`: the vision tower and projector of the checkpoint at `KIMI_K3_HF_MODEL`. The loader opens
-  only the shards holding `vision_tower.*` and `mm_projector.*` keys, so a folder with
-  `model.safetensors.index.json`, `config.json`, `model-00095-of-000096.safetensors` and
-  `model-00096-of-000096.safetensors` is enough. These cases skip when the variable is unset.
+- `synthetic`: seeded random weights, with norm weights drawn around 1 so a norm that fails to load
+  shows up.
+- `real`: the checkpoint at `KIMI_K3_HF_MODEL`; skipped when it is unset. Only the shards with
+  `vision_tower.*` and `mm_projector.*` keys are read, so `model.safetensors.index.json`,
+  `config.json`, `model-00095-of-000096.safetensors` and `model-00096-of-000096.safetensors` are
+  enough.
 
-Per-layer tests take a `layer` parameter, set apart from the weights: `@SAMPLED_LAYERS` (layers 0,
-13 and 26; attention, MLP, block, encoder linears and norms) or `@ALL_LAYERS` (the full-size layer
-test). `MOONVIT_TEST_LAYER=5` runs only layer 5 in the `@SAMPLED_LAYERS` tests; `@ALL_LAYERS`
-ignores it.
+CPU tests use random weights only (`test_load_checkpoint.py` reads the checkpoint itself). On device,
+only attention, the MLP, the projector and what contains them (block, full model, full size) use the
+checkpoint.
+
+Per-layer tests run layers 0, 13 and 26 (`@SAMPLED_LAYERS`), or only the layer in
+`MOONVIT_TEST_LAYER`. The full-size layer test runs all 27 (`@ALL_LAYERS`) and ignores the variable.
 
 ## Tests
 
