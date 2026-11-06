@@ -77,8 +77,7 @@ TODO (image pre-processing, `tt/image_prep.py`):
 
 ## Weights
 
-The `reference` (every layer) and `shallow_reference` (the first two layers, for the CPU
-tests) fixtures in `tests/conftest.py` build with the weights a test's marks ask for. A test with
+The `reference` fixture in `tests/conftest.py` builds with the weights a test's marks ask for. A test with
 `@SYNTHETIC` runs with random weights, one with `@REAL` with the checkpoint, and one with both runs
 once with each (ids `synthetic` and `real`; `-m synthetic` or `-m real` selects by weights). CPU tests
 use random weights only (`test_load_checkpoint.py` reads the checkpoint itself). Device tests use the

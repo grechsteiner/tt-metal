@@ -49,7 +49,7 @@ def test_from_hf_config_defaults_match_reference(tmp_path, vision_config):
     """Keys a config.json leaves out resolve the way the reference model builds."""
     (tmp_path / "config.json").write_text(json.dumps({"vision_config": vision_config}))
     config = MoonViTConfig.from_hf_config(tmp_path)
-    tower = KimiK3VisionModel(load_vision_config(tmp_path, num_hidden_layers=1)).vision_tower
+    tower = KimiK3VisionModel(load_vision_config(tmp_path)).vision_tower
     block = tower.encoder.blocks[0]
     assert config.pos_emb_interpolation_mode == tower.patch_embed.pos_emb.interpolation_mode
     assert config.patch_embed_proj_bias == (tower.patch_embed.proj.bias is not None)
@@ -61,14 +61,14 @@ def test_from_hf_config_defaults_match_reference(tmp_path, vision_config):
 @SYNTHETIC
 @pytest.mark.parametrize("grid", GRIDS.values(), ids=GRIDS.keys())
 @torch.no_grad()
-def test_forward_shape(shallow_config, shallow_reference, grid):
-    pixels, grid_thws = random_patches(shallow_config, grid)
+def test_forward_shape(config, reference, grid):
+    pixels, grid_thws = random_patches(config, grid)
     pixels = pixels.to(torch.bfloat16)
-    n = pixels.shape[0] // shallow_config.merge_area
-    (tower_out,) = shallow_reference.vision_tower(pixels, grid_thws)
-    assert tower_out.shape == (n, shallow_config.merge_area, shallow_config.hidden_size)
-    (out,) = shallow_reference(pixels, grid_thws)
-    assert out.shape == (n, shallow_config.text_hidden_size)
+    n = pixels.shape[0] // config.merge_area
+    (tower_out,) = reference.vision_tower(pixels, grid_thws)
+    assert tower_out.shape == (n, config.merge_area, config.hidden_size)
+    (out,) = reference(pixels, grid_thws)
+    assert out.shape == (n, config.text_hidden_size)
     assert out.dtype == torch.bfloat16
     assert torch.isfinite(out).all()
 

@@ -21,10 +21,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
 from models.experimental.kimi_k3_moonvit_v2.tt.device_input import sp_mesh_mapper
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 
-# Depth of the shallow model that the full-model tests run (`shallow_reference`, `shallow_config`).
-TEST_LAYERS = 2
-
-# Weights. A test that builds `reference` or `shallow_reference` carries one or both of these marks,
+# Weights. A test that builds `reference` carries one or both of these marks,
 # and conftest.py runs it once per mark: SYNTHETIC with random weights, REAL with the checkpoint at
 # $KIMI_K3_HF_MODEL. `-m synthetic` or `-m real` selects by weights.
 SYNTHETIC_MARK = "synthetic"

@@ -247,7 +247,7 @@ def generate(h: int, w: int, seed: int, dtype: str, blocks: int | None) -> None:
         print(f"[goldens] {name}: {seconds:.1f} s, peak RSS so far {peak_gb:.1f} GB", flush=True)
 
     t = time.time()
-    reference = build_reference(REAL_MARK, None)
+    reference = build_reference(REAL_MARK)
     if dtype == "fp32":
         reference = to_fp32(reference)
     config = MoonViTConfig.from_hf_config(checkpoint)

@@ -13,7 +13,6 @@ prep and the CPU tests can use it.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,9 +92,6 @@ class MoonViTConfig:
     def merged_dim(self) -> int:
         """Width of a merged token: the window's patches concatenated."""
         return self.hidden_size * self.merge_area
-
-    def with_layers(self, num_hidden_layers: int) -> MoonViTConfig:
-        return dataclasses.replace(self, num_hidden_layers=num_hidden_layers)
 
     @classmethod
     def from_hf_config(cls, config: dict | str | Path) -> MoonViTConfig:
