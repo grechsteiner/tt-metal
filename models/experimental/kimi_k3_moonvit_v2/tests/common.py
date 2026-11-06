@@ -396,26 +396,26 @@ class MeshRows:
         return min((self.n - 1) // self.share, RING_SIZE - 1) * self.share
 
     @property
-    def real(self) -> slice:
+    def real_slice(self) -> slice:
         """The real rows on the mesh."""
         return slice(self.start, min(self.start + self.share, self.n))
 
-    def take(self, x: torch.Tensor) -> torch.Tensor:
+    def real_rows(self, x: torch.Tensor) -> torch.Tensor:
         """The real rows on the mesh: the rows of a golden to compare with `gather`."""
-        return x[self.real]
+        return x[self.real_slice]
 
-    def held(self, x: torch.Tensor) -> torch.Tensor:
+    def padded_rows(self, x: torch.Tensor) -> torch.Tensor:
         """`x` zero-padded to `rows`, then the `share` rows on the mesh."""
         return host_prep.pad_rows(x, self.rows)[self.start : self.start + self.share]
 
     def shard(self, x: torch.Tensor, mesh_device, dtype=ttnn.bfloat16, layout=ttnn.TILE_LAYOUT) -> ttnn.Tensor:
         """(L, C) or (L, H, C) on the host -> the mesh's rows on device, [1, 1 or H, share/sp, C]."""
-        x = self.held(x)
+        x = self.padded_rows(x)
         return sp_shard(x if x.ndim == 2 else x.transpose(0, 1), mesh_device, self.sp_axis, self.share, dtype, layout)
 
     def gather(self, x: ttnn.Tensor, mesh_device) -> torch.Tensor:
         """The inverse of `shard` with the padding dropped: -> (real rows, C) or (real rows, H, C)."""
-        out = sp_gather(x, mesh_device, self.sp_axis, self.real.stop - self.real.start)
+        out = sp_gather(x, mesh_device, self.sp_axis, self.real_slice.stop - self.real_slice.start)
         return out if out.ndim == 2 else out.transpose(0, 1)
 
 

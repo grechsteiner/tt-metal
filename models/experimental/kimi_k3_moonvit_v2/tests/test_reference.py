@@ -113,7 +113,7 @@ def test_padding_layout_grids(config, size):
     (grid,) = padding_layout_grid(size)
     h, w = check_grid(torch.tensor([grid]), config)
     chip = MeshRows(h * w, config.max_patches, None)
-    real = chip.real.stop - chip.real.start
+    real = chip.real_slice.stop - chip.real_slice.start
     last_chip = config.max_patches - chip.share
     if size in ("full", "max_side"):
         assert h * w == config.max_patches
@@ -130,14 +130,14 @@ def test_mesh_rows():
     """On the ring every row; on one chip the quarter of the last ring chip with real rows."""
     x = torch.arange(10.0)[:, None]
     ring = MeshRows(10, 16, sp_axis=1)
-    assert torch.equal(ring.take(x), x)
-    assert torch.equal(ring.held(x)[:10], x) and not ring.held(x)[10:].any()
+    assert torch.equal(ring.real_rows(x), x)
+    assert torch.equal(ring.padded_rows(x)[:10], x) and not ring.padded_rows(x)[10:].any()
     chip = MeshRows(10, 16, sp_axis=None)
-    assert (chip.share, chip.start, chip.real) == (4, 8, slice(8, 10))
-    assert torch.equal(chip.take(x), x[8:10])
-    assert torch.equal(chip.held(x), torch.tensor([[8.0], [9.0], [0.0], [0.0]]))
+    assert (chip.share, chip.start, chip.real_slice) == (4, 8, slice(8, 10))
+    assert torch.equal(chip.real_rows(x), x[8:10])
+    assert torch.equal(chip.padded_rows(x), torch.tensor([[8.0], [9.0], [0.0], [0.0]]))
     # An already padded tensor gives the same rows.
-    assert torch.equal(chip.held(torch.nn.functional.pad(x, (0, 0, 0, 6))), chip.held(x))
+    assert torch.equal(chip.padded_rows(torch.nn.functional.pad(x, (0, 0, 0, 6))), chip.padded_rows(x))
     assert MeshRows(16, 16, None).start == 12 and MeshRows(3, 16, None).start == 0
 
 
