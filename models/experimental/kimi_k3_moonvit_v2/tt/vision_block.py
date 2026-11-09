@@ -19,7 +19,7 @@ import torch
 
 import ttnn
 
-from .model_config import MoonViTConfig, VisionParallel
+from .model_config import KernelConfigs, MoonViTConfig, VisionParallel
 from .module import Module, rename_substate
 from .rms_norm import RMSNorm
 from .rope import RopeTensors
@@ -34,15 +34,16 @@ class TT_Vision_Block(Module):
         *,
         mesh_device: ttnn.MeshDevice,
         parallel: VisionParallel,
-        compute_kernel_config,
+        kernels: KernelConfigs,
         ccl_slot: int = 0,
     ) -> None:
-        """`ccl_slot`: see `TT_Vision_Attention`."""
+        """`kernels` and `ccl_slot`: see `TT_Vision_Attention`. The norms use `kernels.default` and the MLP
+        `kernels.linear`."""
         super().__init__()
         norm_kwargs = dict(
             eps=config.norm_eps,
             mesh_device=mesh_device,
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=kernels.default,
             output_dtype=ttnn.bfloat16,
         )
         self.norm0 = RMSNorm(config.hidden_size, **norm_kwargs)
@@ -51,10 +52,10 @@ class TT_Vision_Block(Module):
             config,
             mesh_device=mesh_device,
             parallel=parallel,
-            compute_kernel_config=compute_kernel_config,
+            kernels=kernels,
             ccl_slot=ccl_slot,
         )
-        self.mlp = TT_Vision_MLP(config, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
+        self.mlp = TT_Vision_MLP(config, mesh_device=mesh_device, compute_kernel_config=kernels.linear)
 
     def _prepare_torch_state(self, state: dict[str, torch.Tensor]) -> None:
         rename_substate(state, "wqkv", "attention.wqkv")

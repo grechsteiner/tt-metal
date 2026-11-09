@@ -18,22 +18,23 @@ import torch
 import ttnn
 
 from .linear import Linear
-from .model_config import MoonViTConfig
+from .model_config import KernelConfigs, MoonViTConfig
 from .module import Module, rename_substate
 from .rms_norm import RMSNorm
 
 
 class TT_Projector(Module):
-    def __init__(self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, compute_kernel_config) -> None:
+    def __init__(self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, kernels: KernelConfigs) -> None:
+        """`kernels`: the linears use `kernels.projector`, the norm `kernels.default`."""
         super().__init__()
-        kwargs = dict(bias=False, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
+        kwargs = dict(bias=False, mesh_device=mesh_device, compute_kernel_config=kernels.projector)
         self.fc0 = Linear(config.merged_dim, config.merged_dim, activation_fn="gelu", **kwargs)
         self.fc1 = Linear(config.merged_dim, config.text_hidden_size, **kwargs)
         self.post_norm = RMSNorm(
             config.text_hidden_size,
             eps=config.projector_norm_eps,
             mesh_device=mesh_device,
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=kernels.default,
         )
 
     def _prepare_torch_state(self, state: dict[str, torch.Tensor]) -> None:

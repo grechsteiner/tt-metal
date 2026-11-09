@@ -14,6 +14,7 @@ prep and the CPU tests can use it.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -202,14 +203,106 @@ def resolve_parallel(
     return VisionParallel(sp_axis=sp.mesh_axis, sp_factor=sp.factor, ccl=ccl)
 
 
-def compute_kernel_config(mesh_device: ttnn.MeshDevice):
-    """HiFi4 with fp32 accumulation for every matmul: highest fidelity, no quantization."""
+@dataclass(frozen=True)
+class Precision:
+    """Math fidelity per op group, whether Q/K/V enter ring attention as bfp8, and RoPE's accumulator.
+
+    Names, not ttnn objects, so this module stays ttnn-free; `kernel_configs` builds the configs.
+    Every group keeps fp32 accumulation (`fp32_dest_acc_en=True`), and the residual stream stays fp32.
+
+    - `linear_fidelity`: the encoder's wqkv, wo, fc0 and fc1.
+    - `projector_fidelity`: the projector's fc0 and fc1.
+    - `sdpa_fidelity`: ring attention's compute config. With fp32 accumulation the op takes no separate
+      `matmul_math_fidelity`, so this sets both of its matmuls (Q K^T and P V).
+    - `qkv_bfp8`: Q, K and V typecast to bfp8 after RoPE (`rotary_embedding_llama` takes bf16 only). The
+      op needs one dtype for all three and for its gather buffers, and always outputs bf16.
+    - `rope_fp32_dest`: run `rotary_embedding_llama` with fp32 accumulation (`fp32_dest_acc_en=True`,
+      HiFi4). The kernel packs `x*cos` and `rot(x)*sin` to bf16 buffers before the add either way, but
+      its default 16-bit dest rounds them stochastically; with fp32 dest they round to nearest. On ttsim
+      that cuts RoPE's error against exact math from 3.4e-3 to 2.35e-3.
+
+    The norms and the patch embed always run at HiFi4.
+    """
+
+    linear_fidelity: str = "HiFi4"
+    projector_fidelity: str = "HiFi4"
+    sdpa_fidelity: str = "HiFi4"
+    qkv_bfp8: bool = False
+    rope_fp32_dest: bool = False
+
+
+# Highest fidelity, no quantization. The default.
+PRECISION_BASELINE = Precision()
+# HiFi3 linears and ring attention, HiFi2 projector, RoPE with fp32 accumulation; bf16 Q/K/V. Estimated on
+# CPU at the baseline's accuracy and ~1.11-1.16x its speed per image. Not measured on silicon.
+PRECISION_HIFI3 = Precision(
+    linear_fidelity="HiFi3", projector_fidelity="HiFi2", sdpa_fidelity="HiFi3", rope_fp32_dest=True
+)
+# Ring attention at HiFi2 on bfp8 Q/K/V (typecast after RoPE), HiFi3 linears, HiFi2 projector. Estimated on
+# CPU at ~2x the baseline's error and ~1.2-1.35x its speed per image, before counting the halved K/V
+# bytes. Not measured on silicon.
+PRECISION_HIFI2_BFP8 = Precision(
+    linear_fidelity="HiFi3", projector_fidelity="HiFi2", sdpa_fidelity="HiFi2", qkv_bfp8=True
+)
+PRECISIONS = {"baseline": PRECISION_BASELINE, "hifi3": PRECISION_HIFI3, "hifi2_bfp8": PRECISION_HIFI2_BFP8}
+PRECISION_ENV = "MOONVIT_PRECISION"
+
+
+def resolve_precision(precision: Precision | str | None = None) -> Precision:
+    """`precision` itself, the preset of that name, or with None the preset named by $MOONVIT_PRECISION
+    (`baseline` when unset), so evals and the device tests can compare presets without code changes.
+
+    The variable is read on each call, not at import, so a bad value fails only the device path and
+    not the host-only image prep that also imports this module."""
+    if isinstance(precision, Precision):
+        return precision
+    source = "precision"
+    if precision is None:
+        source, precision = PRECISION_ENV, os.environ.get(PRECISION_ENV, "baseline")
+    if precision not in PRECISIONS:
+        raise ValueError(f"{source}={precision!r}; expected one of {sorted(PRECISIONS)}")
+    return PRECISIONS[precision]
+
+
+class KernelConfigs(NamedTuple):
+    """Compute kernel configs per op group (see `Precision`) and the dtype of Q/K/V into ring attention."""
+
+    default: object  # norms, patch embed
+    linear: object  # encoder wqkv, wo, fc0, fc1
+    sdpa: object
+    projector: object
+    qkv_dtype: object = None  # None: bf16, as RoPE and `nlp_create_qkv_heads` produce
+    rope: object = None  # None: the op's default (HiFi4, bf16 dest)
+
+    @classmethod
+    def uniform(cls, compute_kernel_config) -> KernelConfigs:
+        """`compute_kernel_config` for every op group, bf16 Q/K/V, and RoPE at the op's default."""
+        return cls(compute_kernel_config, compute_kernel_config, compute_kernel_config, compute_kernel_config)
+
+
+def compute_kernel_config(mesh_device: ttnn.MeshDevice, math_fidelity: str = "HiFi4"):
+    """`math_fidelity` (HiFi4 by default) with fp32 accumulation."""
     import ttnn
 
     return ttnn.init_device_compute_kernel_config(
         mesh_device.arch(),
-        math_fidelity=ttnn.MathFidelity.HiFi4,
+        math_fidelity=getattr(ttnn.MathFidelity, math_fidelity),
         math_approx_mode=False,
         fp32_dest_acc_en=True,
         packer_l1_acc=False,
+    )
+
+
+def kernel_configs(mesh_device: ttnn.MeshDevice, precision: Precision | str | None = None) -> KernelConfigs:
+    """The compute configs and Q/K/V dtype of `precision` (see `resolve_precision`)."""
+    import ttnn
+
+    precision = resolve_precision(precision)
+    return KernelConfigs(
+        default=compute_kernel_config(mesh_device),
+        linear=compute_kernel_config(mesh_device, precision.linear_fidelity),
+        sdpa=compute_kernel_config(mesh_device, precision.sdpa_fidelity),
+        projector=compute_kernel_config(mesh_device, precision.projector_fidelity),
+        qkv_dtype=ttnn.bfloat8_b if precision.qkv_bfp8 else None,
+        rope=compute_kernel_config(mesh_device) if precision.rope_fp32_dest else None,
     )

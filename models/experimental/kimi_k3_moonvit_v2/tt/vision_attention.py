@@ -17,6 +17,11 @@ The ring attention runs on all but the last column of the worker grid; the last 
 K/V all-gather that feeds it (`ccl_core_grid_offset`, column-major CCL cores). Q and K chunks of 256
 rows divide every chip's share of the padded sequence. With fp32 accumulation, K chunks of 512 need
 more L1 for circular buffers than a Blackhole core has.
+
+Precision (`model_config.Precision`): the linears use `kernels.linear` and ring attention
+`kernels.sdpa`. With `kernels.qkv_dtype` set (bfp8), Q and K are typecast after RoPE, which takes bf16
+only, and V with them: the op needs one dtype for Q, K, V and the gather buffers. Its output is bf16
+whatever the input dtype. `kernels.rope`, when set, is RoPE's compute config (fp32 accumulation).
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from __future__ import annotations
 import ttnn
 
 from .linear import Linear
-from .model_config import MoonViTConfig, VisionParallel
+from .model_config import KernelConfigs, MoonViTConfig, VisionParallel
 from .module import Module
 from .rope import RopeTensors
 
@@ -39,21 +44,25 @@ class TT_Vision_Attention(Module):
         *,
         mesh_device: ttnn.MeshDevice,
         parallel: VisionParallel,
-        compute_kernel_config,
+        kernels: KernelConfigs,
         ccl_slot: int = 0,
     ) -> None:
-        """`ccl_slot` picks the ring attention semaphores and K/V gather buffers (`ccl.ccl_slot_for_layer`)."""
+        """`kernels`: the linears use `kernels.linear`, ring attention `kernels.sdpa`, RoPE `kernels.rope`,
+        and Q/K/V are cast to `kernels.qkv_dtype` (see the module docstring). `ccl_slot` picks the ring
+        attention semaphores and K/V gather buffers (`ccl.ccl_slot_for_layer`)."""
         super().__init__()
         self.config = config
         self.mesh_device = mesh_device
         self.parallel = parallel
         self.ccl_slot = ccl_slot
         self.scale = config.head_dim**-0.5
-        kwargs = dict(bias=config.attn_bias, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
+        kwargs = dict(bias=config.attn_bias, mesh_device=mesh_device, compute_kernel_config=kernels.linear)
         self.wqkv = Linear(config.hidden_size, 3 * config.qkv_hidden_size, **kwargs)
         # fp32 out: added to the fp32 residual stream (vision_block.py).
         self.wo = Linear(config.qkv_hidden_size, config.hidden_size, output_dtype=ttnn.float32, **kwargs)
-        self.compute_kernel_config = compute_kernel_config
+        self.sdpa_compute_kernel_config = kernels.sdpa
+        self.qkv_dtype = kernels.qkv_dtype
+        self.rope_compute_kernel_config = kernels.rope
         # Built on the first forward: they read the device's core grid, and construction stays
         # device-free (test_module.py builds the tree on a stand-in device).
         self._program_config: ttnn.SDPAProgramConfig | None = None
@@ -88,10 +97,21 @@ class TT_Vision_Attention(Module):
         )  # each [1, heads, rows, head_dim]
         ttnn.deallocate(qkv)
 
-        q_rot = ttnn.experimental.rotary_embedding_llama(q, rope.cos, rope.sin, rope.trans_mat, is_decode_mode=False)
-        k_rot = ttnn.experimental.rotary_embedding_llama(k, rope.cos, rope.sin, rope.trans_mat, is_decode_mode=False)
+        q_rot, k_rot = (
+            ttnn.experimental.rotary_embedding_llama(
+                t,
+                rope.cos,
+                rope.sin,
+                rope.trans_mat,
+                is_decode_mode=False,
+                compute_kernel_config=self.rope_compute_kernel_config,
+            )
+            for t in (q, k)
+        )
         ttnn.deallocate(q)
         ttnn.deallocate(k)
+        if self.qkv_dtype is not None:
+            q_rot, k_rot, v = (self._cast(t) for t in (q_rot, k_rot, v))
 
         attn = self._ring_attention(q_rot, k_rot, v, logical_n)
         ttnn.deallocate(q_rot)
@@ -104,12 +124,17 @@ class TT_Vision_Attention(Module):
         ttnn.deallocate(merged)
         return out
 
+    def _cast(self, t: ttnn.Tensor) -> ttnn.Tensor:
+        out = ttnn.typecast(t, self.qkv_dtype, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        ttnn.deallocate(t)
+        return out
+
     def _ring_attention(self, q: ttnn.Tensor, k: ttnn.Tensor, v: ttnn.Tensor, logical_n: ttnn.Tensor) -> ttnn.Tensor:
         """Non-causal attention of the local Q rows over the whole ring's K and V, padding masked."""
         ccl = self.parallel.ccl
         sp_axis = self.parallel.sp_axis
         program_config, ccl_core_grid_offset = self._sdpa_grid()
-        k_buffer, v_buffer = ccl.ring_attention_buffers(self.ccl_slot, k.shape, 2, sp_axis)
+        k_buffer, v_buffer = ccl.ring_attention_buffers(self.ccl_slot, k.shape, 2, sp_axis, dtype=k.dtype)
         out, _, _ = ttnn.transformer.ring_joint_scaled_dot_product_attention(
             q,
             k,
@@ -120,7 +145,7 @@ class TT_Vision_Attention(Module):
             logical_n=logical_n,
             program_config=program_config,
             scale=self.scale,
-            compute_kernel_config=self.compute_kernel_config,
+            compute_kernel_config=self.sdpa_compute_kernel_config,
             dim=2,
             multi_device_global_semaphore=ccl.ring_attention_semaphores(self.ccl_slot),
             num_links=ccl.num_links,
