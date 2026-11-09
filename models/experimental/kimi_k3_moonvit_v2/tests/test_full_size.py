@@ -50,7 +50,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
 )
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
-    compute_kernel_config,
+    kernel_configs,
     resolve_parallel,
 )
 from models.experimental.kimi_k3_moonvit_v2.tt.patch_embed import TT_Patch_Embed
@@ -141,8 +141,8 @@ def layer_forward(mesh_device, sp_axis, num_links, config, reference, saved, lay
     slot 0; same weights), and returns the second output. Back-to-back trace replays then never run two
     ring attention calls in a row on the same slot (see `ccl.py`)."""
     parallel = resolve_parallel(mesh_device, *ring_parallel(mesh_device, sp_axis, num_links), config)
-    ckc = compute_kernel_config(mesh_device)
-    tt = TT_Vision_Block(config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=ckc, ccl_slot=0)
+    kernels = kernel_configs(mesh_device)
+    tt = TT_Vision_Block(config, mesh_device=mesh_device, parallel=parallel, kernels=kernels, ccl_slot=0)
     tt.load_torch_state_dict(reference.vision_tower.encoder.blocks[layer].state_dict())
 
     x = saved("patch_embed" if layer == 0 else goldens.block_file(layer - 1)[:-3])
@@ -153,9 +153,7 @@ def layer_forward(mesh_device, sp_axis, num_links, config, reference, saved, lay
     if not twice:
         return (lambda: tt(x_dev, rope, logical_n)), parallel
 
-    tt_slot1 = TT_Vision_Block(
-        config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=ckc, ccl_slot=1
-    )
+    tt_slot1 = TT_Vision_Block(config, mesh_device=mesh_device, parallel=parallel, kernels=kernels, ccl_slot=1)
     share_parameters(tt, tt_slot1)
 
     def forward():
@@ -210,11 +208,11 @@ def encoder_inputs(mesh_device, sp_axis, num_links, config, reference):
     """`(patch_embed, encoder, inputs, parallel)`: both modules with the checkpoint's weights, and the
     device inputs for the pixels `goldens.py` used, held on device."""
     parallel = resolve_parallel(mesh_device, *ring_parallel(mesh_device, sp_axis, num_links), config)
-    ckc = compute_kernel_config(mesh_device)
+    kernels = kernel_configs(mesh_device)
     tower = reference.vision_tower
-    patch_embed = TT_Patch_Embed(config, mesh_device=mesh_device, compute_kernel_config=ckc)
+    patch_embed = TT_Patch_Embed(config, mesh_device=mesh_device, compute_kernel_config=kernels.default)
     patch_embed.load_torch_state_dict(tower.patch_embed.state_dict())
-    encoder = TT_MoonViT_Encoder(config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=ckc)
+    encoder = TT_MoonViT_Encoder(config, mesh_device=mesh_device, parallel=parallel, kernels=kernels)
     encoder.load_torch_state_dict(tower.encoder.state_dict())
 
     pixels, grid_thws = random_patches(config, [(1, H, W)], SEED)
