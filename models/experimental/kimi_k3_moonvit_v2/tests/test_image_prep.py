@@ -38,9 +38,15 @@ def hf_preprocess(processor: KimiK3VisionProcessor, image: Image.Image) -> tuple
     return out["pixel_values"], out["grid_thws"]
 
 
-def random_image(width: int, height: int, seed: int = 0) -> Image.Image:
+def random_image(width: int, height: int, mode: str = "RGB", transparency=None, seed: int = 0) -> Image.Image:
+    """Random 8-bit pixels in `mode` (P gets a random palette); `transparency` goes to `info`, as PNG's tRNS."""
     rng = np.random.default_rng(seed)
-    return Image.frombytes("RGB", (width, height), rng.bytes(3 * width * height))
+    image = Image.frombytes(mode, (width, height), rng.bytes(Image.getmodebands(mode) * width * height))
+    if mode == "P":
+        image.putpalette(rng.bytes(768))
+    if transparency is not None:
+        image.info["transparency"] = transparency
+    return image
 
 
 def hf_plan(width: int, height: int, cfg: dict) -> image_prep.ResizePlan:
@@ -113,29 +119,37 @@ def test_accepts_under_limit(config, size):
     assert pixel_values.shape == (h * w, 3, config.patch_size, config.patch_size)
 
 
-NON_RGB_MODES = ("RGBA", "LA", "PA", "L", "P", "1", "CMYK", "I;16")
-
-
-@pytest.mark.parametrize("mode", NON_RGB_MODES)
-def test_rejects_non_rgb(config, expect_error, monkeypatch, mode):
-    def no_resize(*args, **kwargs):
-        raise AssertionError("the mode check must come before the resize")
-
-    monkeypatch.setattr(Image.Image, "resize", no_resize)
-    with expect_error(ValueError, f"image mode '{mode}' is not supported"):
-        image_prep.image_to_patches(Image.new(mode, (35, 35)), config)
-
-
 SIZES = ((1, 1), (35, 35), (100, 57), (1920, 1080), (8000, 300), (300, 8000), (4662, 4662))
 
 
-@pytest.mark.parametrize("size", SIZES, ids=[f"{w}x{h}" for w, h in SIZES])
-def test_image_to_patches_matches_hf(config, processor, size):
-    image = random_image(*size)
+def assert_matches_hf(config, processor, image):
     pixel_values, grid_thws = image_prep.image_to_patches(image, config)
     hf_pixel_values, hf_grid_thws = hf_preprocess(processor, image)
     assert grid_thws.dtype == hf_grid_thws.dtype and torch.equal(grid_thws, hf_grid_thws)
     assert pixel_values.dtype == hf_pixel_values.dtype and torch.equal(pixel_values, hf_pixel_values)
+
+
+@pytest.mark.parametrize("size", SIZES, ids=[f"{w}x{h}" for w, h in SIZES])
+def test_image_to_patches_matches_hf(config, processor, size):
+    assert_matches_hf(config, processor, random_image(*size))
+
+
+# id -> (mode, info["transparency"]): one case per branch of `to_rgb`, plus the quirk in HF's alpha
+# test. RGBA has an alpha band; P-tRNS has alpha from PNG's tRNS (one alpha per palette index); P has
+# none, and Pillow resizes it with nearest neighbour, so converting it before the resize fails; LAB has
+# a band named "A" that HF takes for alpha (Pillow's `has_transparency_data` would not).
+MODES = {
+    "RGBA": ("RGBA", None),
+    "P-tRNS": ("P", np.random.default_rng(1).bytes(256)),
+    "P": ("P", None),
+    "LAB": ("LAB", None),
+}
+
+
+@pytest.mark.parametrize("mode, transparency", MODES.values(), ids=MODES.keys())
+def test_modes_match_hf(config, processor, mode, transparency):
+    """8000x300 is resized, so this also checks that the conversion comes after the resize."""
+    assert_matches_hf(config, processor, random_image(8000, 300, mode, transparency))
 
 
 def test_padding_is_black(config):
@@ -165,6 +179,14 @@ def test_preprocessor_defaults(config, media_proc_cfg):
     assert config.merge_kernel_size == (m, m)
     assert media_proc_cfg["image_mean"] == [image_prep.IMAGE_MEAN] * 3
     assert media_proc_cfg["image_std"] == [image_prep.IMAGE_STD] * 3
+    assert media_proc_cfg["transparent_bg_fill_stage"] == "after_resize"
+    assert media_proc_cfg["transparent_bg_config"] == {
+        "pattern": "chessboard",
+        "chessboard_square_size": image_prep.CHESSBOARD_SQUARE,
+        "chessboard_square_on_top_left": True,
+        "chessboard_white_value": image_prep.CHESSBOARD_WHITE,
+        "chessboard_gray_value": image_prep.CHESSBOARD_GRAY,
+    }
 
 
 def test_prepare_host_inputs_from_image(config):
