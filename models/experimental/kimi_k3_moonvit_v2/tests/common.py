@@ -30,7 +30,7 @@ from models.experimental.kimi_k3_moonvit_v2.tt.model_config import (
     RING_SIZE,
     MoonViTConfig,
     check_grid,
-    compute_kernel_config,
+    kernel_configs,
     resolve_parallel,
 )
 from models.experimental.kimi_k3_moonvit_v2.tt.rope import TT_Rope
@@ -532,9 +532,8 @@ def check_ring_layer(
     from models.experimental.kimi_k3_moonvit_v2.tests.goldens import to_fp32, use_sampled_attention
 
     parallel = resolve_parallel(mesh_device, *ring_parallel(mesh_device, sp_axis, num_links), config)
-    tt = tt_class(
-        config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=compute_kernel_config(mesh_device)
-    )
+    kernels = kernel_configs(mesh_device)
+    tt = tt_class(config, mesh_device=mesh_device, parallel=parallel, kernels=kernels)
     block = reference.vision_tower.encoder.blocks[layer]
     state = block.state_dict()
     if state_prefixes is not None:

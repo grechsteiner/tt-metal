@@ -78,21 +78,23 @@ class TT_CCL:
             ttnn.synchronize_device(self.mesh_device)
         return self._semaphores[slot]
 
-    def ring_attention_buffers(self, slot: int, shape, dim: int, mesh_axis: int) -> tuple[ttnn.Tensor, ttnn.Tensor]:
-        """Persistent (K, V) gather buffers in `slot` for K and V shards of `shape`, gathered along
-        `dim` over `mesh_axis`; allocated once per slot and shape.
+    def ring_attention_buffers(
+        self, slot: int, shape, dim: int, mesh_axis: int, dtype: ttnn.DataType = ttnn.bfloat16
+    ) -> tuple[ttnn.Tensor, ttnn.Tensor]:
+        """Persistent (K, V) gather buffers in `slot` for K and V shards of `shape` and `dtype`, gathered
+        along `dim` over `mesh_axis`; allocated once per slot, shape and dtype.
 
         Allocated uninitialized: the gather overwrites all of it, so no zero fill is needed.
         """
         _check_slot(slot)
         gathered = list(shape)
         gathered[dim] = shape[dim] * tuple(self.mesh_device.shape)[mesh_axis]
-        key = (slot, tuple(gathered))
+        key = (slot, tuple(gathered), dtype)
         if key not in self._buffers:
             ttnn.synchronize_device(self.mesh_device)
             self._buffers[key] = tuple(
                 ttnn.allocate_tensor_on_device(
-                    ttnn.Shape(gathered), ttnn.bfloat16, ttnn.TILE_LAYOUT, self.mesh_device, ttnn.DRAM_MEMORY_CONFIG
+                    ttnn.Shape(gathered), dtype, ttnn.TILE_LAYOUT, self.mesh_device, ttnn.DRAM_MEMORY_CONFIG
                 )
                 for _ in range(2)
             )

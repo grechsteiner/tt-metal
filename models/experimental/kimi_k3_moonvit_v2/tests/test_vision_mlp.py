@@ -23,13 +23,14 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     MeshRows,
     simulator_config,
 )
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import compute_kernel_config
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import kernel_configs
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_mlp import TT_Vision_MLP
 
 
 def check_vision_mlp(mesh_device, sp_axis, config, reference, layer, grid) -> None:
-    """`grid` padded to `config.max_patches`, the ring's length; one chip runs its quarter (`MeshRows`)."""
-    ckc = compute_kernel_config(mesh_device)
+    """`grid` padded to `config.max_patches`, the ring's length; one chip runs its quarter (`MeshRows`).
+    Linears at the encoder linears' fidelity for $MOONVIT_PRECISION."""
+    ckc = kernel_configs(mesh_device).linear
     tt = TT_Vision_MLP(device_config(config, sp_axis), mesh_device=mesh_device, compute_kernel_config=ckc)
     tt.load_torch_state_dict(reference.vision_tower.encoder.blocks[layer].mlp.state_dict())
 
