@@ -14,7 +14,8 @@ residual stream, which is fp32 (`tt/vision_block.py`). Matmuls are HiFi4 with fp
 ## Structure
 
 The TT code needs only `ttnn` and `torch` (plus numpy and Pillow in `tt/image_prep.py`) and imports
-nothing from `reference/`. The reference needs `transformers`.
+nothing from `reference/`. The reference needs `transformers`. `service/` is the one exception: it reads
+the weights with `reference/checkpoint.py`, which needs only `torch` and `safetensors`.
 
 | Path | Contents |
 |---|---|
@@ -28,11 +29,14 @@ nothing from `reference/`. The reference needs `transformers`.
 | `tt/model_config.py` | `MoonViTConfig`, the grid check, `VisionParallel`, the compute kernel config |
 | `tt/module.py` | `Module`, `ModuleList`, `Parameter`, state-dict loading, `save`/`load`, `load_cached` |
 | `tt/linear.py`, `tt/rms_norm.py` | The leaf layers |
-| `tt/ccl.py` | `ParallelFactor` and `TT_CCL` (links, topology, ring-attention semaphores and buffers) |
+| `tt/ccl.py` | `ParallelFactor` and `TT_CCL` (links, topology, ring-attention semaphores and buffers), and the ring's fabric config and link count |
 | `tt/device_input.py` | `DeviceInput`: a per-image input allocated once and rewritten in place, so a trace can replay it |
 | `tt/patch_embed.py`, `rope.py`, `vision_attention.py`, `vision_mlp.py`, `vision_block.py` | One TT module per encoder part |
 | `tt/patch_merger.py`, `tt/projector.py` | `TT_Patch_Merger` (no weights) and `TT_Projector` |
 | `tt/vision_model.py` | `TT_MoonViT_Vision_Tower` (patch embed, encoder, merger) and `TT_MoonViT_Vision_Model` (tower, projector) |
+| `tt/trace.py` | `Trace`: captures one forward and replays it |
+| `service/media.py` | `KimiK3Media`, the module the encoder service loads: `prepare` (`image_to_patches`), `expansion` (the `<\|media_pad\|>` run, `n_tokens` = h*w/4), `stored_nbytes`, and `load` / `encode` / `close`, which run the model on the ring through one trace that serves every image size |
+| `service/format.py` | The stored value: `n_tokens` x 7168 bf16 rows, no header |
 | `tests/` | Shared helpers (`common.py`, `conftest.py`), CPU tests, one device test file per part, the full-size tests, and `goldens.py` (their saved reference outputs) |
 
 ## Torch and ttnn
@@ -94,7 +98,8 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_reference.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_load_checkpoint.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_module.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_goldens.py \
-       models/experimental/kimi_k3_moonvit_v2/tests/test_quality.py
+       models/experimental/kimi_k3_moonvit_v2/tests/test_quality.py \
+       models/experimental/kimi_k3_moonvit_v2/tests/test_media.py
 
 # Device, one P150: the parts that work on each row alone
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
@@ -108,7 +113,8 @@ pytest models/experimental/kimi_k3_moonvit_v2/tests/test_linear.py \
 # Device, LoudBox ring: everything with attention
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_vision_attention.py \
        models/experimental/kimi_k3_moonvit_v2/tests/test_vision_block.py \
-       models/experimental/kimi_k3_moonvit_v2/tests/test_vision_model.py
+       models/experimental/kimi_k3_moonvit_v2/tests/test_vision_model.py \
+       models/experimental/kimi_k3_moonvit_v2/tests/test_media_encoder.py
 
 # Simulator (ttsim): the `_small` variants of the row-wise tests; also run on hardware.
 # With TT_METAL_SIMULATOR set, every other device test is skipped.
