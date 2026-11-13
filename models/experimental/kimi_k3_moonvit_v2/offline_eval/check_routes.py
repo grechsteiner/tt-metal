@@ -44,9 +44,10 @@ def import_tt_d_gen(root: Path):
     spec = importlib.util.spec_from_file_location("tt_dynamo_encoder", root / "adapters/dynamo/tt_dynamo/encoder.py")
     encoder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(encoder)
+    from tt_encoder.model import ManifestModel as TtDGenManifestModel
     from tt_encoder.service import EncoderService, Limits
 
-    return encoder.splice, EncoderService, Limits
+    return encoder.splice, EncoderService, Limits, TtDGenManifestModel
 
 
 class ManifestModel:
@@ -144,7 +145,7 @@ def main() -> int:
 
     tokenizer = AutoTokenizer.from_pretrained(str(args.hf_files), trust_remote_code=True)
     processor = KimiK3VisionProcessor(media_proc_cfg=json.loads(PREPROCESSOR_CONFIG.read_text())["media_proc_cfg"])
-    splice, EncoderService, Limits = import_tt_d_gen(args.tt_d_gen)
+    splice, EncoderService, Limits, TtDGenManifestModel = import_tt_d_gen(args.tt_d_gen)
     manifest = json.loads((args.table / "manifest.json").read_text())
     table = torch.load(args.table / "extra_rows.pt", weights_only=True)
     by_name = {e["image"]: e for e in manifest["images"]}
@@ -188,7 +189,7 @@ def main() -> int:
         if entry["image"] not in covered:
             questions.append((entry["image"], [entry["image"]], "Describe this image in detail."))
 
-    route_service = services["strict_key"]
+    route_service = EncoderService(TtDGenManifestModel(str(args.table / "manifest.json")), Limits())
     for qid, names, text in questions:
         if not all(n in by_name for n in names):
             report["routes"].append({"id": qid, "status": "image(s) missing from manifest"})
