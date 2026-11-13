@@ -5,7 +5,7 @@ For each image: compare the host prep options (tt image_prep, HF processor on th
 and save the bf16 rows. Run from the tt-metal root with KIMI_K3_HF_MODEL set.
 
   python -m models.experimental.kimi_k3_moonvit_v2.offline_eval.encode_images \
-      --images DIR [DIR ...] --golden-dir DIR --out DIR [--cpu-only] [--only PREFIX,...]
+      --images DIR [DIR ...] --golden-dir DIR --out DIR [--cpu-only] [--no-reference] [--only PREFIX,...]
 """
 
 from __future__ import annotations
@@ -130,6 +130,7 @@ def main() -> int:
     ap.add_argument("--golden-dir", type=Path, default=None)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--cpu-only", action="store_true")
+    ap.add_argument("--no-reference", action="store_true")
     ap.add_argument("--only", default="")
     args = ap.parse_args()
 
@@ -185,7 +186,7 @@ def main() -> int:
             if golden_file is not None and golden_file.exists():
                 golden = torch.load(golden_file, map_location="cpu", weights_only=True).float()
                 r["golden"] = "eval_embeddings fp32"
-            elif r["patches"] <= CPU_REFERENCE_MAX_PATCHES:
+            elif not args.no_reference and r["patches"] <= CPU_REFERENCE_MAX_PATCHES:
                 t0 = time.perf_counter()
                 golden = cpu_reference(fp32_reference, *hf, args.out / "cpu_ref" / f"{img_path.stem}.pt")
                 r["golden"] = "cpu fp32 chunked, hf prep"
@@ -195,6 +196,7 @@ def main() -> int:
 
             if (
                 golden is not None
+                and not args.no_reference
                 and variants["hf_rgb_first"] is not None
                 and not r["prep"]["hf_rgb_first_vs_hf"].get("bit_exact", True)
             ):
