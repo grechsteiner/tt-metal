@@ -20,6 +20,7 @@ Child names match the reference, so `load_torch_state_dict(reference.state_dict(
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 import ttnn
@@ -154,6 +155,18 @@ class TT_MoonViT_Vision_Model(Module):
             "logical_n": self.logical_n.write(torch.tensor(host["logical_n"], dtype=torch.int64)),
         }
 
+    def _data_shards(self, shards: list, rows_per_chip: int, logical_n: int) -> list:
+        """The shards that hold rows 0..logical_n-1, in order: the first line of chips along `sp_axis`, cut at the
+        last chip with real rows. Without sequence parallelism, the first replica. `shards` is row-major over the
+        mesh."""
+        sp_axis = self.parallel.sp_axis
+        if sp_axis is None:
+            return shards[:1]
+        mesh_cols = self.mesh_device.shape[1]
+        # The first line of chips along `sp_axis`; any other lines hold replicas.
+        shards = shards[:mesh_cols] if sp_axis == 1 else shards[::mesh_cols]
+        return shards[: -(-logical_n // rows_per_chip)]
+
     def gather_output(self, out: ttnn.Tensor, *, logical_n: int) -> torch.Tensor:
         """Concatenate the shards along `sp_axis` and drop the padding -> (logical_n, C). The merger
         keeps the reference's token order, so no reordering is needed. Without sequence parallelism the
@@ -161,17 +174,46 @@ class TT_MoonViT_Vision_Model(Module):
 
         Each chip's shard is converted on its own and joined with `torch.cat`, which is faster than
         `ttnn.to_torch` with a mesh composer. Chips that hold only padding are skipped."""
-        sp_axis = self.parallel.sp_axis
-        mesh_cols = self.mesh_device.shape[1]
         shards = ttnn.get_device_tensors(ttnn.from_device(out))  # row-major over the mesh
-        if sp_axis is None:
-            shards = shards[:1]
-        else:
-            # The first line of chips along `sp_axis`; any other lines hold replicas.
-            shards = shards[:mesh_cols] if sp_axis == 1 else shards[::mesh_cols]
-            rows_per_chip = out.shape[2]
-            shards = shards[: -(-logical_n // rows_per_chip)]
+        shards = self._data_shards(shards, out.shape[2], logical_n)
         return torch.cat([ttnn.to_torch(shard)[0, 0] for shard in shards])[:logical_n]
+
+    def forward_rows(self, **inputs) -> ttnn.Tensor:
+        """`forward`, then untilized on the device: bf16 [1, 1, S/(4*sp), C] row major, for `read_output`. Traceable,
+        so a trace of it hands back rows that need no untilize on the host."""
+        out = self.forward(**inputs)
+        rows = ttnn.to_layout(out, ttnn.ROW_MAJOR_LAYOUT, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        ttnn.deallocate(out)
+        return rows
+
+    def read_output(self, out: ttnn.Tensor, rows: np.ndarray) -> None:
+        """Copy the first `len(rows)` rows of `forward_rows`'s output into `rows`, chip by chip.
+
+        rows: writable, C-contiguous [logical_n, C] array of bf16 bits (uint16), for example the rows of a stored value
+        in shared memory. Each chip's real rows are copied straight to their place, with no tensor of the whole output
+        and no host untilize. When one chip holds every real row only that chip is read; otherwise the whole mesh is
+        read in one call, which reads the chips in parallel and is faster than reading the data chips one by one
+        (measured on a LoudBox: 4 chips 79 ms vs 139 ms; 1 chip 32 ms vs 51 ms). The reads release the GIL.
+        """
+        if out.layout != ttnn.ROW_MAJOR_LAYOUT or out.dtype != ttnn.bfloat16:
+            raise ValueError(f"expected forward_rows's bf16 row-major output, got {out.dtype} {out.layout}")
+        logical_n, width = rows.shape
+        rows_per_chip = out.shape[2]
+        if width != out.shape[3]:
+            raise ValueError(f"rows of width {width} for an output of width {out.shape[3]}")
+        if logical_n <= rows_per_chip:
+            shards = [self._data_shards(ttnn.get_device_tensors(out), rows_per_chip, logical_n)[0].cpu()]
+        else:
+            shards = self._data_shards(ttnn.get_device_tensors(ttnn.from_device(out)), rows_per_chip, logical_n)
+        for i, shard in enumerate(shards):
+            start = i * rows_per_chip
+            n = min(rows_per_chip, logical_n - start)
+            # Row major with no tile padding, so the padded shape is the logical one; unlike `to_torch`, it hands back
+            # the host buffer without a copy. TODO: read straight into `rows` (copy_device_to_host_tensor into a host
+            # tensor that borrows its memory); MiniMax-M3 measured ~1.2 ms per 672x672 image saved, but the watcher's
+            # NOC check aborts that read.
+            host = shard.to_torch_with_padded_shape()[0, 0, :n]
+            np.copyto(rows[start : start + n], host.view(torch.uint16).numpy())
 
     def forward(
         self, patches: ttnn.Tensor, pos_emb: ttnn.Tensor, rope: RopeTensors, logical_n: ttnn.Tensor

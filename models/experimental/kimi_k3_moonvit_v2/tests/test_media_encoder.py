@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Device: the Kimi-K3 media module's load, encode and close on the ring, as the encoder service calls them, against
-the fp32 reference. Two images of different sizes go through the one captured trace."""
+the fp32 reference. Images of different sizes go through the one captured trace, and encode's read (untilized on the
+chips, each chip's rows copied into the slot) matches the untraced forward gathered on the host bit for bit."""
 
 from __future__ import annotations
 
@@ -13,6 +14,8 @@ import json
 import numpy as np
 import torch
 from safetensors.torch import save_file
+
+import ttnn
 
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import checkpoint_path
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
@@ -25,14 +28,15 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     SIMULATOR,
     SYNTHETIC,
     assert_quality,
+    assert_same_as_untraced,
     random_array,
 )
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import to_fp32
 
 SHARD = "model-00001-of-00001.safetensors"
 # (height, width) in pixels: 4 x 6 and 10 x 4 patches after the padding, so the second image has a grid the trace
-# was not captured with.
-IMAGES = [(56, 84), (130, 50)]
+# was not captured with; then the first again, which must not keep any of the second's rows.
+IMAGES = [(56, 84), (130, 50), (56, 84)]
 
 
 def write_checkpoint(reference, directory) -> str:
@@ -47,8 +51,19 @@ def encode(media: KimiK3Media, array: np.ndarray):
     item = media.prepare("image", array)
     buf = memoryview(bytearray(media.stored_nbytes(item)))
     media.encode([item], [buf])
+    assert media_format.Header.read(buf).kind == "image"
     rows = torch.from_numpy(media_format.embeddings(buf, media.hidden).copy()).view(torch.bfloat16)
-    return item, rows
+    return item, bytes(buf), rows
+
+
+def untraced_gather(media: KimiK3Media, item) -> torch.Tensor:
+    """The read before encode untilized on the chips: the untraced, tiled forward, gathered on the host."""
+    model = media._model
+    out = model(**model.prepare_inputs(item.pixel_values, item.grid_thws))
+    try:
+        return model.gather_output(out, logical_n=item.n_tokens).to(torch.bfloat16)
+    finally:
+        ttnn.deallocate(out)
 
 
 @RING_TRACE
@@ -61,12 +76,25 @@ def test_load_encode_close(mesh_device, sp_axis, num_links, weights, reference, 
 
     media.load(mesh_device, weights_path, "image", {})
     try:
-        for seed, hw in enumerate(IMAGES):
-            item, rows = encode(media, random_array(*hw, seed=seed))
+        values = []
+        for hw in IMAGES:
+            array = random_array(*hw)
+            old = untraced_gather(media, media.prepare("image", array))
+            item, value, rows = encode(media, array)
+            values.append(value)
             assert rows.shape == (item.n_tokens, media.hidden)
+            assert_same_as_untraced(old, rows, f"encode {hw}")
             with torch.no_grad():
                 (golden,) = golden_model(item.pixel_values, item.grid_thws)
             assert_quality(golden, rows, relative_rmse=0.07)
+        assert values[0] == values[2], "the same image after another gave a different value"
+
+        # Two items in one call, and a slot that is not bytes.
+        items = [media.prepare("image", random_array(*hw)) for hw in IMAGES[:2]]
+        bufs = [memoryview(bytearray(media.stored_nbytes(items[0]))).cast("H")]
+        bufs.append(memoryview(bytearray(media.stored_nbytes(items[1]))))
+        media.encode(items, bufs)
+        assert [bufs[0].tobytes(), bytes(bufs[1])] == values[:2]
     finally:
         media.close()
     media.close()  # a second close is a no-op
@@ -77,6 +105,9 @@ def test_load_encode_close(mesh_device, sp_axis, num_links, weights, reference, 
 
 
 @SIMULATOR
-def test_load_rejects_one_chip(mesh_device, sp_axis, num_links, expect_error):
+def test_load_rejects_one_chip(mesh_device, sp_axis, num_links, tmp_path, expect_error):
+    media = KimiK3Media(MEDIA_CONFIG)
     with expect_error(ValueError, r"sp factor 4 != mesh axis 1 size \(1, 1\)"):
-        KimiK3Media(MEDIA_CONFIG).load(mesh_device, "", "image", {})
+        media.load(mesh_device, str(tmp_path), "image", {})
+    media.load(None, "", "image", {"stub_embeddings": True})  # the failed load left nothing loaded
+    media.close()
