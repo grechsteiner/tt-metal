@@ -5,7 +5,7 @@
 """Stored value of one media item: a Header, then n_tokens bf16 embeddings of width hidden.
 
 Written by the media module's encode and read by the prefill runtime, which knows n_tokens from the media ref and
-takes the media kind from the header. The same layout as MiniMax-M3's stored value.
+takes the media kind from the header.
 """
 
 import struct

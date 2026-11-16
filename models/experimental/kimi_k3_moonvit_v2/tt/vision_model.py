@@ -184,8 +184,8 @@ class TT_MoonViT_Vision_Model(Module):
         rows: writable, C-contiguous [logical_n, C] array of bf16 bits (uint16), for example the rows of a stored value
         in shared memory. Each chip's real rows are copied straight to their place, with no tensor of the whole output
         and no host untilize. When one chip holds every real row only that chip is read; otherwise the whole mesh is
-        read in one call, which reads the chips in parallel and is faster than reading the data chips one by one
-        (measured on a LoudBox: 4 chips 79 ms vs 139 ms; 1 chip 32 ms vs 51 ms). The reads release the GIL.
+        read in one call, which reads the chips in parallel and is faster than reading the data chips one by one. The
+        reads release the GIL.
         """
         if out.layout != ttnn.ROW_MAJOR_LAYOUT or out.dtype != ttnn.bfloat16:
             raise ValueError(f"expected forward's bf16 row-major output, got {out.dtype} {out.layout}")
@@ -202,8 +202,7 @@ class TT_MoonViT_Vision_Model(Module):
             n = min(rows_per_chip, logical_n - start)
             # Row major with no tile padding, so the padded shape is the logical one; unlike `to_torch`, it hands back
             # the host buffer without a copy. TODO: read straight into `rows` (copy_device_to_host_tensor into a host
-            # tensor that borrows its memory); MiniMax-M3 measured ~1.2 ms per 672x672 image saved, but the watcher's
-            # NOC check aborts that read.
+            # tensor that borrows its memory) to skip this copy, but the watcher's NOC check aborts that read.
             host = shard.to_torch_with_padded_shape()[0, 0, :n]
             np.copyto(rows[start : start + n], host.view(torch.uint16).numpy())
 
