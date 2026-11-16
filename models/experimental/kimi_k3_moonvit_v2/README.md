@@ -24,7 +24,7 @@ the weights with `reference/checkpoint.py`, which needs only `torch` and `safete
 | `reference/checkpoint.py` | Reads `vision_tower.*` and `mm_projector.*` from a Kimi-K3 HF checkpoint |
 | `reference/config.json`, `LICENSE-Kimi-K3` | The K3 `vision_config` and the upstream license |
 | `reference/media_utils.py`, `reference/kimi_k3_vision_processing.py`, `reference/preprocessor_config.json` | Upstream's image processor and its config; the golden for `tt/image_prep.py` |
-| `tt/image_prep.py` | PIL image to `(pixel_values, grid_thws)`, matching the HF processor: resize, black padding to a multiple of 28 px, normalize, patchify |
+| `tt/image_prep.py` | PIL image to `(pixel_values, grid_thws)`, matching the HF processor: `resize_image` (resize, black padding to a multiple of 28 px; uint8), then `pixels_to_patches` (normalize, patchify; float32). `image_to_patches` runs both |
 | `tt/host_prep.py` | Device inputs built on the host: patch rows, position embeddings, RoPE cos/sin, window order, padding to `max_patches` rows |
 | `tt/model_config.py` | `MoonViTConfig`, the grid check, `VisionParallel`, the compute kernel config |
 | `tt/module.py` | `Module`, `ModuleList`, `Parameter`, state-dict loading, `save`/`load`, `load_cached` |
@@ -35,7 +35,7 @@ the weights with `reference/checkpoint.py`, which needs only `torch` and `safete
 | `tt/patch_merger.py`, `tt/projector.py` | `TT_Patch_Merger` (no weights) and `TT_Projector` |
 | `tt/vision_model.py` | `TT_MoonViT_Vision_Tower` (patch embed, encoder, merger) and `TT_MoonViT_Vision_Model` (tower, projector) |
 | `tt/trace.py` | `Trace`: captures one forward and replays it |
-| `service/media.py` | `KimiK3Media`, the module the encoder service loads: `prepare` (`image_to_patches`), `expansion` (the `<\|media_pad\|>` run, `n_tokens` = h*w/4), `stored_nbytes`, and `load` / `encode` / `close`, which run the model on the ring through one trace that serves every image size and copy each chip's rows straight into the slot. The option `stub_embeddings` writes seeded rows with no chip |
+| `service/media.py` | `KimiK3Media`, the module the encoder service loads: `prepare` (`resize_image`: the item holds uint8 pixels, as in MiniMax-M3, and `encode` makes the patches), `expansion` (the `<\|media_pad\|>` run, `n_tokens` = h*w/4), `stored_nbytes`, and `load` / `encode` / `close`, which run the model on the ring through one trace that serves every image size and copy each chip's rows straight into the slot. The option `stub_embeddings` writes seeded rows with no chip |
 | `service/format.py` | The stored value, as MiniMax-M3 stores it: a 16-byte `Header` with the media kind, then `n_tokens` x 7168 bf16 rows |
 | `tests/` | Shared helpers (`common.py`, `conftest.py`), CPU tests, one device test file per part, the full-size tests, and `goldens.py` (their saved reference outputs) |
 

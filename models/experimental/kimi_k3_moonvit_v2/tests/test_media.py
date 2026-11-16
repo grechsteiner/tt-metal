@@ -8,6 +8,7 @@ copied into `reference/`. The device side, load and encode, is `test_media_encod
 from __future__ import annotations
 
 import json
+import pickle
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from models.experimental.kimi_k3_moonvit_v2.reference.kimi_k3_vision_processing 
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
 from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media
 from models.experimental.kimi_k3_moonvit_v2.tests.common import MEDIA_CONFIG, MEDIA_PAD, random_array
+from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 TEXT_HIDDEN = 7168
@@ -39,10 +41,14 @@ def test_prepare_matches_hf(processor, hw):
     array = random_array(*hw)
     item = media.prepare("image", array)
 
+    # The item holds uint8 pixels; encode makes the patches from them.
+    assert item.pixels.dtype == np.uint8
+    pixel_values, grid_thws = pixels_to_patches(item.pixels, media.config)
     want = processor.preprocess([{"type": "image", "image": Image.fromarray(array)}])
-    assert torch.equal(item.pixel_values, want["pixel_values"])
-    assert item.grid_thws.tolist() == want["grid_thws"].tolist()
-    _, h, w = item.grid_thws[0].tolist()
+    assert torch.equal(pixel_values, want["pixel_values"])
+    assert grid_thws.tolist() == want["grid_thws"].tolist()
+    _, h, w = grid_thws[0].tolist()
+    assert (item.grid_h, item.grid_w) == (h // 2, w // 2)
     assert item.n_tokens == h * w // 4
     assert media.placeholder_token_ids == {"image": MEDIA_PAD}
     assert media.expansion(item) == [(MEDIA_PAD, item.n_tokens)]
@@ -64,6 +70,28 @@ def test_prepare_matches_hf(processor, hw):
 def test_prepare_rejects(expect_error, kind, array, message):
     with expect_error(ValueError, message):
         KimiK3Media(MEDIA_CONFIG).prepare(kind, array)
+
+
+def test_prepare_takes_read_only_and_flipped_images():
+    """prepare takes a read-only image, and a flipped or channel-swapped view like its copy."""
+    media = KimiK3Media(MEDIA_CONFIG)
+    image = random_array(100, 60)
+    read_only = image.copy()
+    read_only.flags.writeable = False
+    assert np.array_equal(media.prepare("image", read_only).pixels, media.prepare("image", image).pixels)
+    for view in (image[::-1], image[:, ::-1], image[..., ::-1]):
+        assert np.array_equal(media.prepare("image", view).pixels, media.prepare("image", view.copy()).pixels)
+
+
+def test_image_pickles_out_of_band():
+    """The service sends items between processes: the pixels go out of band, so the stream stays small."""
+    item = KimiK3Media(MEDIA_CONFIG).prepare("image", random_array(672, 896))
+    buffers = []
+    stream = pickle.dumps(item, protocol=5, buffer_callback=buffers.append)
+    assert len(stream) < 4096
+    back = pickle.loads(stream, buffers=buffers)
+    assert (back.grid_h, back.grid_w) == (item.grid_h, item.grid_w)
+    assert np.array_equal(back.pixels, item.pixels)
 
 
 def test_prepare_does_not_import_ttnn():
@@ -146,13 +174,20 @@ def test_stub_encode_is_deterministic():
 
 
 def test_encode_checks_every_slot_first(expect_error):
-    """A wrong-sized slot raises before any slot is written."""
+    """A slot of the wrong size, read-only or not C-contiguous raises before any slot is written."""
     media = stub_media()
     items = [media.prepare("image", random_array(56, 84, seed=s)) for s in (0, 1)]
-    bufs = [slot(media, items[0]), slot(media, items[1], extra=2)]
-    with expect_error(ValueError, "a slot of"):
-        media.encode(items, bufs)
-    assert bytes(bufs[0]) == bytes(len(bufs[0]))
+    good, size = slot(media, items[0]), media.stored_nbytes(items[1])
+    bad_slots = (
+        ("a slot of", slot(media, items[1], extra=2)),
+        ("read-only", memoryview(bytes(size))),
+        ("not C-contiguous", memoryview(bytearray(2 * size))[::2]),  # the right size, every other byte
+    )
+    for message, bad in bad_slots:
+        with expect_error(ValueError, message):
+            media.encode(items, [good, bad])
+        assert bytes(good) == bytes(len(good)), "encode wrote into a slot before it checked them all"
+    bufs = [good, slot(media, items[1])]
     with expect_error(ValueError, "2 items for 1 slots"):
         media.encode(items, bufs[:1])
     media.close()

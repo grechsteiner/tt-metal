@@ -35,7 +35,7 @@ import torch
 from PIL import Image
 
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
-from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import image_to_patches
+from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches, resize_image
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
 
 if TYPE_CHECKING:
@@ -48,12 +48,17 @@ SP_AXIS = 1
 
 @dataclass(frozen=True)
 class K3Image:
-    pixel_values: torch.Tensor
-    """(h*w, 3, 14, 14) float32, as HF's processor returns it."""
-    grid_thws: torch.Tensor
-    """[[1, h, w]], the grid in patches."""
-    n_tokens: int
-    """Embeddings: one per 2 x 2 window of patches, h*w/4."""
+    pixels: np.ndarray
+    """Resized and padded RGB image, uint8 [height, width, 3]; height and width are multiples of 28. encode
+    normalizes it and cuts it into patches (`tt/image_prep.py:pixels_to_patches`)."""
+    grid_h: int
+    """Image-token rows: height / 28 (14x14 patches merged 2x2)."""
+    grid_w: int
+    """Image-token columns: width / 28."""
+
+    @property
+    def n_tokens(self) -> int:
+        return self.grid_h * self.grid_w
 
 
 def _clear_frames(error: BaseException) -> None:
@@ -72,8 +77,8 @@ def _clear_frames(error: BaseException) -> None:
 
 
 def _stub_rows(item: K3Image, hidden: int) -> np.ndarray:
-    """Stand-in embeddings for item, seeded by its patches and grid: bf16 bits as uint16, [n_tokens, hidden]."""
-    digest = hashlib.sha256(item.grid_thws.numpy().tobytes() + item.pixel_values.numpy().tobytes()).digest()
+    """Stand-in embeddings for item, seeded by its pixels: bf16 bits as uint16, [n_tokens, hidden]."""
+    digest = hashlib.sha256(np.asarray(item.pixels.shape).tobytes() + item.pixels.tobytes()).digest()
     seed = int.from_bytes(digest[:8], "little")
     rows = torch.randn(item.n_tokens, hidden, generator=torch.Generator().manual_seed(seed)) * 0.02
     return rows.to(torch.bfloat16).view(torch.uint16).numpy()
@@ -115,7 +120,8 @@ class KimiK3Media:
         self._stub = False
 
     def prepare(self, kind: str, media: np.ndarray) -> K3Image:
-        """Resize, pad and patchify one image on the CPU as HF's processor does, bit for bit (`tt/image_prep.py`).
+        """Resize and pad one image on the CPU as HF's processor does, bit for bit (`tt/image_prep.py:resize_image`).
+        encode does the rest of HF's processing (normalize, patchify), so the item stays uint8 and pickles small.
 
         media: non-empty uint8 RGB [height, width, 3]. An image whose grid is over 65,536 patches or 512 patches a
         side raises ValueError: it is rejected, never shrunk.
@@ -126,9 +132,9 @@ class KimiK3Media:
             raise ValueError(
                 f"expected a non-empty uint8 RGB [height, width, 3] array, got {media.dtype} {media.shape}"
             )
-        pixel_values, grid_thws = image_to_patches(Image.fromarray(media), self.config)
-        _, h, w = grid_thws[0].tolist()
-        return K3Image(pixel_values, grid_thws, h * w // self.config.merge_area)
+        pixels = resize_image(Image.fromarray(media), self.config)
+        fh, fw = (k * self.config.patch_size for k in self.config.merge_kernel_size)
+        return K3Image(pixels, pixels.shape[0] // fh, pixels.shape[1] // fw)
 
     def expansion(self, item: K3Image) -> list[tuple[int, int]]:
         """The run of placeholders that replaces the template's one <|media_pad|>. The tokens around it
@@ -179,7 +185,7 @@ class KimiK3Media:
             )
             load_cached(model, options.get("cache_dir"), lambda: load_vision_state_dict(weights_path))
             # The inputs are written in place on every call, so a trace captured on this image replays any other.
-            inputs = model.prepare_inputs(*image_to_patches(Image.new("RGB", (28, 28)), self.config))
+            inputs = model.prepare_inputs(*pixels_to_patches(np.zeros((28, 28, 3), np.uint8), self.config))
             # Untraced first: that compiles the programs and allocates the ring-attention buffers, neither of which
             # can happen inside a capture. forward untilizes on the chips, inside the trace, so the replay's output
             # is read back as plain rows.
@@ -195,15 +201,21 @@ class KimiK3Media:
         """Write each item's stored value into its slot in out: format.Header("image"), then its bf16 embeddings.
 
         out holds one slot per item: a writable, C-contiguous memoryview of `stored_nbytes(item)` bytes, in any format.
-        Every slot's size is checked before anything is written. Each chip's rows are copied straight into the slot
+        Every slot is checked (writable, C-contiguous, the right size) before anything is written. encode normalizes
+        and patchifies each image on the CPU, then each chip's rows are copied straight into the slot
         (`TT_MoonViT_Vision_Model.read_output`); the waits on the chips release the GIL. If encode raises, the caller
         must not use the slots of that call.
 
-        Raises ValueError for a slot of the wrong size, and RuntimeError before load or after close.
+        Raises ValueError for a slot that is read-only, not C-contiguous or of the wrong size, and RuntimeError before
+        load or after close.
         """
         if len(items) != len(out):
             raise ValueError(f"{len(items)} items for {len(out)} slots")
         for item, buf in zip(items, out):
+            if buf.readonly:
+                raise ValueError("a read-only slot: encode writes into its slots")
+            if not buf.c_contiguous:
+                raise ValueError("a slot that is not C-contiguous: a stored value is one run of bytes")
             size = self.stored_nbytes(item)
             if buf.nbytes != size:
                 raise ValueError(
@@ -219,7 +231,7 @@ class KimiK3Media:
                 rows[:] = _stub_rows(item, self.hidden)
                 continue
             try:
-                self._model.prepare_inputs(item.pixel_values, item.grid_thws)
+                self._model.prepare_inputs(*pixels_to_patches(item.pixels, self.config))
                 self._model.read_output(self._trace.replay(), rows)
             except BaseException as error:
                 _clear_frames(error)  # so that close, while the caller holds the error, frees the device tensors

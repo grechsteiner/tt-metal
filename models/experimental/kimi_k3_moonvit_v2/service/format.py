@@ -15,7 +15,6 @@ import numpy as np
 
 KINDS = ("image",)
 _HEADER = struct.Struct("<B15x")  # kind, padded so the rows stay 16-byte aligned
-HEADER_NBYTES = _HEADER.size
 _BF16_BYTES = 2
 
 

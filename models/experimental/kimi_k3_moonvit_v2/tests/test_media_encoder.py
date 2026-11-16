@@ -32,6 +32,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     random_array,
 )
 from models.experimental.kimi_k3_moonvit_v2.tests.goldens import to_fp32
+from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches
 
 SHARD = "model-00001-of-00001.safetensors"
 # (height, width) in pixels: 4 x 6 and 10 x 4 patches after the padding, so the second image has a grid the trace
@@ -60,7 +61,7 @@ def untraced_gather(media: KimiK3Media, item) -> torch.Tensor:
     """The untraced forward, gathered on the host with `gather_output`: what encode's traced replay and
     `read_output` must match."""
     model = media._model
-    out = model(**model.prepare_inputs(item.pixel_values, item.grid_thws))
+    out = model(**model.prepare_inputs(*pixels_to_patches(item.pixels, model.config)))
     try:
         return model.gather_output(out, logical_n=item.n_tokens).to(torch.bfloat16)
     finally:
@@ -86,7 +87,7 @@ def test_load_encode_close(mesh_device, sp_axis, num_links, weights, reference, 
             assert rows.shape == (item.n_tokens, media.hidden)
             assert_same_as_untraced(old, rows, f"encode {hw}")
             with torch.no_grad():
-                (golden,) = golden_model(item.pixel_values, item.grid_thws)
+                (golden,) = golden_model(*pixels_to_patches(item.pixels, media.config))
             assert_quality(golden, rows, relative_rmse=0.07)
         assert values[0] == values[2], "the same image after another gave a different value"
 
