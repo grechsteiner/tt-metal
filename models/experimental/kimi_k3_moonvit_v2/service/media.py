@@ -181,10 +181,10 @@ class KimiK3Media:
             # The inputs are written in place on every call, so a trace captured on this image replays any other.
             inputs = model.prepare_inputs(*image_to_patches(Image.new("RGB", (28, 28)), self.config))
             # Untraced first: that compiles the programs and allocates the ring-attention buffers, neither of which
-            # can happen inside a capture. forward_rows untilizes on the chips, inside the trace, so the replay's
-            # output is read back as plain rows.
-            ttnn.deallocate(model.forward_rows(**inputs))
-            self._trace = Trace(mesh_device, lambda: model.forward_rows(**inputs))
+            # can happen inside a capture. forward untilizes on the chips, inside the trace, so the replay's output
+            # is read back as plain rows.
+            ttnn.deallocate(model(**inputs))
+            self._trace = Trace(mesh_device, lambda: model(**inputs))
         except BaseException as error:
             self.close()
             _clear_frames(error)  # the failed call's frames hold device tensors

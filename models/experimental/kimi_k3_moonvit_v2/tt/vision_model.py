@@ -178,16 +178,8 @@ class TT_MoonViT_Vision_Model(Module):
         shards = self._data_shards(shards, out.shape[2], logical_n)
         return torch.cat([ttnn.to_torch(shard)[0, 0] for shard in shards])[:logical_n]
 
-    def forward_rows(self, **inputs) -> ttnn.Tensor:
-        """`forward`, then untilized on the device: bf16 [1, 1, S/(4*sp), C] row major, for `read_output`. Traceable,
-        so a trace of it hands back rows that need no untilize on the host."""
-        out = self.forward(**inputs)
-        rows = ttnn.to_layout(out, ttnn.ROW_MAJOR_LAYOUT, memory_config=ttnn.DRAM_MEMORY_CONFIG)
-        ttnn.deallocate(out)
-        return rows
-
     def read_output(self, out: ttnn.Tensor, rows: np.ndarray) -> None:
-        """Copy the first `len(rows)` rows of `forward_rows`'s output into `rows`, chip by chip.
+        """Copy the first `len(rows)` rows of `forward`'s output into `rows`, chip by chip.
 
         rows: writable, C-contiguous [logical_n, C] array of bf16 bits (uint16), for example the rows of a stored value
         in shared memory. Each chip's real rows are copied straight to their place, with no tensor of the whole output
@@ -196,7 +188,7 @@ class TT_MoonViT_Vision_Model(Module):
         (measured on a LoudBox: 4 chips 79 ms vs 139 ms; 1 chip 32 ms vs 51 ms). The reads release the GIL.
         """
         if out.layout != ttnn.ROW_MAJOR_LAYOUT or out.dtype != ttnn.bfloat16:
-            raise ValueError(f"expected forward_rows's bf16 row-major output, got {out.dtype} {out.layout}")
+            raise ValueError(f"expected forward's bf16 row-major output, got {out.dtype} {out.layout}")
         logical_n, width = rows.shape
         rows_per_chip = out.shape[2]
         if width != out.shape[3]:
@@ -218,10 +210,14 @@ class TT_MoonViT_Vision_Model(Module):
     def forward(
         self, patches: ttnn.Tensor, pos_emb: ttnn.Tensor, rope: RopeTensors, logical_n: ttnn.Tensor
     ) -> ttnn.Tensor:
+        """-> bf16 [1, 1, S/(4*sp), C], row major. Untilized on the chips, since the output always goes to the host:
+        inside a trace, so `read_output` copies plain rows with no host untilize."""
         x = self.vision_tower(patches, pos_emb, rope, logical_n)
         out = self.mm_projector(x)
         ttnn.deallocate(x)
-        return out
+        rows = ttnn.to_layout(out, ttnn.ROW_MAJOR_LAYOUT, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        ttnn.deallocate(out)
+        return rows
 
     def run(self, pixel_values: torch.Tensor, grid_thws: torch.Tensor) -> torch.Tensor:
         """Host in, host out: (h*w, 3, 14, 14), [[1, h, w]] -> (h*w/4, text_hidden_size)."""

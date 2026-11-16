@@ -57,7 +57,8 @@ def encode(media: KimiK3Media, array: np.ndarray):
 
 
 def untraced_gather(media: KimiK3Media, item) -> torch.Tensor:
-    """The read before encode untilized on the chips: the untraced, tiled forward, gathered on the host."""
+    """The untraced forward, gathered on the host with `gather_output`: what encode's traced replay and
+    `read_output` must match."""
     model = media._model
     out = model(**model.prepare_inputs(item.pixel_values, item.grid_thws))
     try:
