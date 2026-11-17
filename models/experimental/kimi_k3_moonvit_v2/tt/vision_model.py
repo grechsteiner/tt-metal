@@ -28,7 +28,16 @@ import ttnn
 from .ccl import ParallelFactor, TT_CCL, ccl_slot_for_layer
 from .device_input import DeviceInput
 from .host_prep import prepare_host_inputs
-from .model_config import MoonViTConfig, VisionParallel, check_grid, compute_kernel_config, resolve_parallel
+from .model_config import (
+    KernelConfigs,
+    MoonViTConfig,
+    Precision,
+    VisionParallel,
+    check_grid,
+    kernel_configs,
+    resolve_parallel,
+    resolve_precision,
+)
 from .module import Module, ModuleList
 from .patch_embed import TT_Patch_Embed
 from .patch_merger import TT_Patch_Merger
@@ -58,7 +67,12 @@ def check_output_rows(rows: np.ndarray) -> None:
 
 class TT_MoonViT_Encoder(Module):
     def __init__(
-        self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, parallel: VisionParallel, compute_kernel_config
+        self,
+        config: MoonViTConfig,
+        *,
+        mesh_device: ttnn.MeshDevice,
+        parallel: VisionParallel,
+        kernels: KernelConfigs,
     ) -> None:
         super().__init__()
         n = config.num_hidden_layers
@@ -67,7 +81,7 @@ class TT_MoonViT_Encoder(Module):
                 config,
                 mesh_device=mesh_device,
                 parallel=parallel,
-                compute_kernel_config=compute_kernel_config,
+                kernels=kernels,
                 ccl_slot=ccl_slot_for_layer(layer, n),
             )
             for layer in range(n)
@@ -77,7 +91,7 @@ class TT_MoonViT_Encoder(Module):
             config.hidden_size,
             eps=config.norm_eps,
             mesh_device=mesh_device,
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=kernels.default,
             output_dtype=ttnn.bfloat16,
         )
 
@@ -99,13 +113,16 @@ class TT_MoonViT_Encoder(Module):
 
 class TT_MoonViT_Vision_Tower(Module):
     def __init__(
-        self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, parallel: VisionParallel, compute_kernel_config
+        self,
+        config: MoonViTConfig,
+        *,
+        mesh_device: ttnn.MeshDevice,
+        parallel: VisionParallel,
+        kernels: KernelConfigs,
     ) -> None:
         super().__init__()
-        self.patch_embed = TT_Patch_Embed(config, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
-        self.encoder = TT_MoonViT_Encoder(
-            config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=compute_kernel_config
-        )
+        self.patch_embed = TT_Patch_Embed(config, mesh_device=mesh_device, compute_kernel_config=kernels.default)
+        self.encoder = TT_MoonViT_Encoder(config, mesh_device=mesh_device, parallel=parallel, kernels=kernels)
         self.merger = TT_Patch_Merger(config)
 
     def forward(
@@ -127,17 +144,21 @@ class TT_MoonViT_Vision_Model(Module):
         mesh_device: ttnn.MeshDevice,
         sequence_parallel: ParallelFactor | None = None,
         ccl: TT_CCL | None = None,
+        precision: Precision | str | None = None,
     ) -> None:
+        """`precision`: math fidelity per op group and bfp8 Q/K/V, as a `Precision` or a preset name
+        (`model_config.PRECISIONS`); None takes $MOONVIT_PRECISION, or `baseline` when it is unset."""
         super().__init__()
         self.config = config
         self.mesh_device = mesh_device
         self.parallel = resolve_parallel(mesh_device, sequence_parallel, ccl, config)
-        ckc = compute_kernel_config(mesh_device)
+        self.precision = resolve_precision(precision)
+        kernels = kernel_configs(mesh_device, self.precision)
         self.rope = TT_Rope(config, mesh_device=mesh_device, parallel=self.parallel)
         self.vision_tower = TT_MoonViT_Vision_Tower(
-            config, mesh_device=mesh_device, parallel=self.parallel, compute_kernel_config=ckc
+            config, mesh_device=mesh_device, parallel=self.parallel, kernels=kernels
         )
-        self.mm_projector = TT_Projector(config, mesh_device=mesh_device, compute_kernel_config=ckc)
+        self.mm_projector = TT_Projector(config, mesh_device=mesh_device, kernels=kernels)
         sp_axis = self.parallel.sp_axis
         rows = config.max_patches
         # Row major: the patch embed tiles it on device (patch_embed.py).

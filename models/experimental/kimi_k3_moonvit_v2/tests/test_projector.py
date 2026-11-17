@@ -22,15 +22,15 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
     MeshRows,
     simulator_config,
 )
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import compute_kernel_config
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import kernel_configs
 from models.experimental.kimi_k3_moonvit_v2.tt.projector import TT_Projector
 
 
 def check_projector(mesh_device, sp_axis, config, reference, grid) -> None:
     """The merged tokens of `grid`, padded to `config.max_patches / 4` (the ring's length after merging);
-    one chip runs its quarter (`MeshRows`)."""
-    ckc = compute_kernel_config(mesh_device)
-    tt = TT_Projector(device_config(config, sp_axis), mesh_device=mesh_device, compute_kernel_config=ckc)
+    one chip runs its quarter (`MeshRows`). Precision from $MOONVIT_PRECISION."""
+    kernels = kernel_configs(mesh_device)
+    tt = TT_Projector(device_config(config, sp_axis), mesh_device=mesh_device, kernels=kernels)
     tt.load_torch_state_dict(reference.mm_projector.state_dict())
 
     _, h, w = grid[0]

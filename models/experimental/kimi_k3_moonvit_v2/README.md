@@ -9,7 +9,20 @@ on a LoudBox (2x4) the tests use the first row. Patches are put in window order 
 window's four patches consecutive), padded to 65,536 rows and split along the ring, so the merger is a
 reshape on each chip. Attention is ring attention with the padding masked; everything else is
 sequence parallel. Weights are bf16 and replicated. Activations are bf16 in DRAM, except the encoder's
-residual stream, which is fp32 (`tt/vision_block.py`). Matmuls are HiFi4 with fp32 accumulation.
+residual stream, which is fp32 (`tt/vision_block.py`). Every matmul accumulates in fp32.
+
+Precision is a preset (`Precision` in `tt/model_config.py`), chosen with the model's `precision`
+argument or `$MOONVIT_PRECISION`:
+
+| Preset | Encoder linears | Projector | Ring attention | Q/K/V into attention | RoPE accumulator |
+|---|---|---|---|---|---|
+| `baseline` (default) | HiFi4 | HiFi4 | HiFi4 | bf16 | 16-bit (op default) |
+| `hifi3` | HiFi3 | HiFi2 | HiFi3 | bf16 | fp32 |
+| `hifi2_bfp8` | HiFi3 | HiFi2 | HiFi2 | bfp8 (typecast after RoPE) | 16-bit (op default) |
+
+Norms and the patch embed are HiFi4 in all of them. Estimated on CPU, `hifi3` keeps the baseline's
+accuracy and `hifi2_bfp8` has about twice its error, for more speed. Neither one's speed or accuracy
+has been measured on silicon yet, and the device tests' thresholds were set for `baseline`.
 
 ## Structure
 

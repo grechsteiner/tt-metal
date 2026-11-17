@@ -26,7 +26,7 @@ from models.experimental.kimi_k3_moonvit_v2.tests.common import (
 )
 from models.experimental.kimi_k3_moonvit_v2.tt import host_prep
 from models.experimental.kimi_k3_moonvit_v2.tt.linear import Linear
-from models.experimental.kimi_k3_moonvit_v2.tt.model_config import compute_kernel_config
+from models.experimental.kimi_k3_moonvit_v2.tt.model_config import compute_kernel_config, kernel_configs
 from models.experimental.kimi_k3_moonvit_v2.tt.patch_embed import TT_Patch_Embed
 
 # Per-layer linears, under `vision_tower.encoder.blocks.<layer>`; they see every patch.
@@ -37,13 +37,13 @@ PROJECTOR_LINEARS = {"projector_fc0": "mm_projector.proj.0", "projector_fc1": "m
 PROJECTOR_LINEAR_PATHS = pytest.mark.parametrize("path", PROJECTOR_LINEARS.values(), ids=PROJECTOR_LINEARS.keys())
 
 
-def check_linear(mesh_device, torch_linear, rows: MeshRows) -> None:
+def check_linear(mesh_device, torch_linear, rows: MeshRows, ckc) -> None:
     tt = Linear(
         torch_linear.in_features,
         torch_linear.out_features,
         bias=torch_linear.bias is not None,
         mesh_device=mesh_device,
-        compute_kernel_config=compute_kernel_config(mesh_device),
+        compute_kernel_config=ckc,
     )
     tt.load_torch_state_dict(torch_linear.state_dict())
 
@@ -56,18 +56,20 @@ def check_linear(mesh_device, torch_linear, rows: MeshRows) -> None:
 
 
 def check_encoder_linear(mesh_device, sp_axis, config, reference, layer, path, grid) -> None:
-    """`grid` padded to `config.max_patches`, the ring's length; one chip runs its quarter (`MeshRows`)."""
+    """`grid` padded to `config.max_patches`, the ring's length; one chip runs its quarter (`MeshRows`).
+    At the encoder linears' fidelity for $MOONVIT_PRECISION."""
     torch_linear = reference.vision_tower.encoder.blocks[layer].get_submodule(path)
     ((_, h, w),) = grid
-    check_linear(mesh_device, torch_linear, MeshRows(h * w, config.max_patches, sp_axis))
+    rows = MeshRows(h * w, config.max_patches, sp_axis)
+    check_linear(mesh_device, torch_linear, rows, kernel_configs(mesh_device).linear)
 
 
 def check_projector_linear(mesh_device, sp_axis, config, reference, path, grid) -> None:
     """The merged tokens of `grid`, padded to `config.max_patches / 4` (the ring's length after merging);
-    one chip runs its quarter (`MeshRows`)."""
+    one chip runs its quarter (`MeshRows`). At the projector's fidelity for $MOONVIT_PRECISION."""
     ((_, h, w),) = grid
     rows = MeshRows(h * w // config.merge_area, config.max_patches // config.merge_area, sp_axis)
-    check_linear(mesh_device, reference.get_submodule(path), rows)
+    check_linear(mesh_device, reference.get_submodule(path), rows, kernel_configs(mesh_device).projector)
 
 
 def check_patch_embed_linear(mesh_device, sp_axis, config, reference, grid) -> None:
