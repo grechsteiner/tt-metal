@@ -23,6 +23,7 @@ from models.experimental.kimi_k3_moonvit_v2.service import format as media_forma
 from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media
 from models.experimental.kimi_k3_moonvit_v2.tests.common import MEDIA_CONFIG, MEDIA_PAD, random_array
 from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches
+from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import check_output_rows
 
 REFERENCE_DIR = Path(__file__).parents[1] / "reference"
 TEXT_HIDDEN = 7168
@@ -142,6 +143,37 @@ def test_format_rejects_bad_values(expect_error):
     buf[0] = len(media_format.KINDS)
     with expect_error(ValueError, "unknown media kind"):
         media_format.Header.read(buf)
+
+
+@pytest.mark.parametrize("dtype", ["uint16", "int16", "bfloat16"])
+def test_output_rows_take_bf16_holders(dtype):
+    """read_output copies into an array of any dtype that holds bf16 bits, as format.embeddings returns uint16."""
+    if dtype == "bfloat16":
+        dtype = pytest.importorskip("ml_dtypes").bfloat16
+    check_output_rows(np.zeros((3, 8), dtype))
+
+
+def _read_only(array: np.ndarray) -> np.ndarray:
+    array.flags.writeable = False
+    return array
+
+
+@pytest.mark.parametrize(
+    "rows,error,message",
+    [
+        (torch.zeros(3, 8, dtype=torch.int16), TypeError, "numpy array of uint16, int16, bfloat16"),
+        (np.zeros((3, 8), np.float32), TypeError, "got float32"),
+        (np.zeros((3, 8, 1), np.uint16), ValueError, "shape \\(3, 8, 1\\)"),
+        (np.zeros((0, 8), np.uint16), ValueError, "logical_n > 0"),
+        (np.zeros((3, 16), np.uint16)[:, ::2], ValueError, "C-contiguous False"),
+        (_read_only(np.zeros((3, 8), np.uint16)), ValueError, "writable False"),
+    ],
+    ids=["torch", "float32", "3d", "empty", "strided", "read_only"],
+)
+def test_output_rows_rejects(expect_error, rows, error, message):
+    """read_output raises for these before it reads the chips."""
+    with expect_error(error, message):
+        check_output_rows(rows)
 
 
 def stub_media() -> KimiK3Media:

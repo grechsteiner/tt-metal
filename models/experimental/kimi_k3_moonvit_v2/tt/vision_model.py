@@ -37,6 +37,24 @@ from .rms_norm import RMSNorm
 from .rope import RopeTensors, TT_Rope
 from .vision_block import TT_Vision_Block
 
+# The numpy dtypes that hold bf16 values bit for bit: their raw 16 bits, or ml_dtypes' bfloat16.
+BF16_HOLDERS = ("uint16", "int16", "bfloat16")
+
+
+def check_output_rows(rows: np.ndarray) -> None:
+    """Raise unless `rows` can take `read_output`'s copy: a writable, C-contiguous, non-empty 2D numpy array of one of
+    `BF16_HOLDERS`. TypeError for another type or dtype, ValueError for the rest."""
+    if not isinstance(rows, np.ndarray) or rows.dtype.name not in BF16_HOLDERS:
+        raise TypeError(
+            f"rows must be a numpy array of {', '.join(BF16_HOLDERS)} that holds bf16 values,"
+            f" got {getattr(rows, 'dtype', type(rows).__name__)}"
+        )
+    if rows.ndim != 2 or rows.shape[0] == 0 or not (rows.flags.c_contiguous and rows.flags.writeable):
+        raise ValueError(
+            f"rows must be a writable, C-contiguous [logical_n, C] array with logical_n > 0, got shape {rows.shape},"
+            f" C-contiguous {rows.flags.c_contiguous}, writable {rows.flags.writeable}"
+        )
+
 
 class TT_MoonViT_Encoder(Module):
     def __init__(
@@ -181,18 +199,26 @@ class TT_MoonViT_Vision_Model(Module):
     def read_output(self, out: ttnn.Tensor, rows: np.ndarray) -> None:
         """Copy the first `len(rows)` rows of `forward`'s output into `rows`, chip by chip.
 
-        rows: writable, C-contiguous [logical_n, C] array of bf16 bits (uint16), for example the rows of a stored value
-        in shared memory. Each chip's real rows are copied straight to their place, with no tensor of the whole output
-        and no host untilize. When one chip holds every real row only that chip is read; otherwise the whole mesh is
-        read in one call, which reads the chips in parallel and is faster than reading the data chips one by one. The
-        reads release the GIL.
+        rows: writable, C-contiguous [logical_n, C] array that holds bf16 bits (uint16, int16 or ml_dtypes' bfloat16),
+        for example the rows of a stored value in shared memory. Each chip's real rows are copied straight to their
+        place, with no tensor of the whole output and no host untilize. When one chip holds every real row only that
+        chip is read; otherwise the whole mesh is read in one call, which reads the chips in parallel and is faster
+        than reading the data chips one by one. The reads release the GIL.
+
+        Raises TypeError or ValueError (`check_output_rows`) for a bad `rows`, and ValueError for an `out` that is not
+        forward's output or holds fewer than `logical_n` rows of width C, all before reading the chips.
         """
+        check_output_rows(rows)
         if out.layout != ttnn.ROW_MAJOR_LAYOUT or out.dtype != ttnn.bfloat16:
             raise ValueError(f"expected forward's bf16 row-major output, got {out.dtype} {out.layout}")
         logical_n, width = rows.shape
         rows_per_chip = out.shape[2]
         if width != out.shape[3]:
             raise ValueError(f"rows of width {width} for an output of width {out.shape[3]}")
+        capacity = rows_per_chip * self.parallel.sp_factor
+        if logical_n > capacity:
+            raise ValueError(f"{logical_n} rows for an output of {capacity}")
+        rows = rows.view(np.uint16)  # the same bits, whichever of BF16_HOLDERS rows is
         if logical_n <= rows_per_chip:
             shards = [self._data_shards(ttnn.get_device_tensors(out), rows_per_chip, logical_n)[0].cpu()]
         else:
