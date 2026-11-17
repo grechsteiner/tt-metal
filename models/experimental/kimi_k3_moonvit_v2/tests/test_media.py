@@ -18,9 +18,10 @@ import pytest
 import torch
 from PIL import Image
 
+from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import CHECKPOINT_ENV
 from models.experimental.kimi_k3_moonvit_v2.reference.kimi_k3_vision_processing import KimiK3VisionProcessor
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
-from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media
+from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media, tokenizer_source
 from models.experimental.kimi_k3_moonvit_v2.tests.common import MEDIA_CONFIG, MEDIA_PAD, random_array
 from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import check_output_rows
@@ -52,8 +53,47 @@ def test_prepare_matches_hf(processor, hw):
     assert (item.grid_h, item.grid_w) == (h // 2, w // 2)
     assert item.n_tokens == h * w // 4
     assert media.placeholder_token_ids == {"image": MEDIA_PAD}
-    assert media.expansion(item) == [(MEDIA_PAD, item.n_tokens)]
+    assert (item.height, item.width) == hw
     assert media.stored_nbytes(item) == 16 + item.n_tokens * TEXT_HIDDEN * 2
+
+
+@pytest.fixture(scope="module")
+def tokenizer_media() -> KimiK3Media:
+    """A media module whose expansion can load Kimi-K3's tokenizer (from the Hugging Face repo, unless $KIMI_K3_HF_MODEL
+    names a local checkpoint folder)."""
+    pytest.importorskip("tiktoken")
+    return KimiK3Media(MEDIA_CONFIG)
+
+
+def test_expansion_matches_hf_prompt(tokenizer_media):
+    """The frontend renders the chat with one <|media_pad|> per image, and expansion replaces each: that must give
+    the ids HF gets from the same chat with its processor's image prompts, each <|media_pad|> widened to the image's
+    embeddings as the model does."""
+    media = tokenizer_media
+    tokenizer = media.tokenizer
+    # (height, width): unresized, padded, resized by the side limit, and sizes whose digits cross 3-digit groups.
+    items = [media.prepare("image", random_array(*hw)) for hw in [(1080, 1920), (20, 33), (300, 8000), (1, 1)]]
+    content = [{"type": "image_url", "image_url": {"url": f"file://{i}.png"}} for i in range(len(items))]
+    messages = [{"role": "user", "content": [*content, {"type": "text", "text": "What is in these images?"}]}]
+
+    hf_prompts = [KimiK3VisionProcessor.make_image_prompt(item.width, item.height) for item in items]
+    hf_ids, widths = [], iter(item.n_tokens for item in items)
+    for token in tokenizer.apply_chat_template(messages, image_prompts=hf_prompts, tokenize=True):
+        hf_ids += [token] * (next(widths) if token == MEDIA_PAD else 1)
+
+    ours, runs = [], iter(media.expansion(item) for item in items)
+    pads = ["<|media_pad|>"] * len(items)
+    for token in tokenizer.apply_chat_template(messages, image_prompts=pads, tokenize=True):
+        ours += [t for t, n in next(runs) for _ in range(n)] if token == MEDIA_PAD else [token]
+    assert ours == hf_ids
+
+
+def test_tokenizer_source(monkeypatch):
+    """The local checkpoint folder when $KIMI_K3_HF_MODEL names one, else the Hugging Face repo."""
+    monkeypatch.delenv(CHECKPOINT_ENV, raising=False)
+    assert tokenizer_source() == "moonshotai/Kimi-K3"
+    monkeypatch.setenv(CHECKPOINT_ENV, "/weights/Kimi-K3")
+    assert tokenizer_source() == "/weights/Kimi-K3"
 
 
 @pytest.mark.parametrize(
@@ -96,14 +136,14 @@ def test_image_pickles_out_of_band():
 
 
 def test_prepare_does_not_import_ttnn():
-    """prepare, expansion and stored_nbytes run where the service prepares images, which may have no ttnn. A fresh
-    interpreter, since this one has ttnn imported already."""
+    """prepare and stored_nbytes run where the service prepares images, which may have no ttnn (expansion too; it
+    imports only transformers and the tokenizer). A fresh interpreter, since this one has ttnn imported already."""
     code = (
         "import sys, numpy as np\n"
         "from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media\n"
         f"media = KimiK3Media({MEDIA_CONFIG!r})\n"
         "item = media.prepare('image', np.zeros((30, 40, 3), np.uint8))\n"
-        "media.expansion(item), media.stored_nbytes(item)\n"
+        "media.stored_nbytes(item)\n"
         "assert 'ttnn' not in sys.modules, 'ttnn imported'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, cwd=Path(__file__).parents[4])

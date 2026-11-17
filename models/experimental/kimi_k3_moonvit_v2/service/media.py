@@ -17,6 +17,9 @@ ttnn is imported only where the chips are used, in `device_params` and `load`: `
 `stored_nbytes` must also run in a process without ttnn. With the option `stub_embeddings`, `load` and `encode` write
 seeded stand-in embeddings and use no chip, so the service and the prefill side can be tested without a ring.
 
+`expansion` tokenizes each image's prompt with Kimi's own tokenizer (`tokenizer_source`; it needs `transformers` and
+`tiktoken`).
+
 The service must not call `load`, `encode` or `close` from several threads at once: they share the device inputs and
 the one captured trace.
 """
@@ -28,12 +31,14 @@ import hashlib
 import os
 import traceback
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 from PIL import Image
 
+from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import CHECKPOINT_ENV
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
 from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches, resize_image
 from models.experimental.kimi_k3_moonvit_v2.tt.model_config import RING_SIZE, MoonViTConfig
@@ -44,6 +49,15 @@ if TYPE_CHECKING:
 
 # The ring is along mesh axis 1.
 SP_AXIS = 1
+# The Hugging Face repo id: the tokenizer's source when no local checkpoint folder is given.
+MODEL_NAME = "moonshotai/Kimi-K3"
+
+
+def tokenizer_source() -> str:
+    """Where `AutoTokenizer.from_pretrained` loads Kimi's tokenizer from: the local checkpoint folder that
+    $KIMI_K3_HF_MODEL names, which saves a download when the tokenizer ships with the weights, else MODEL_NAME (the
+    files are then downloaded into the Hugging Face cache)."""
+    return os.environ.get(CHECKPOINT_ENV) or MODEL_NAME
 
 
 @dataclass(frozen=True)
@@ -55,6 +69,10 @@ class K3Image:
     """Image-token rows: height / 28 (14x14 patches merged 2x2)."""
     grid_w: int
     """Image-token columns: width / 28."""
+    width: int
+    """Width in pixels of the image given to prepare, before the resize. The prompt states it (expansion)."""
+    height: int
+    """Height in pixels of the image given to prepare, before the resize."""
 
     @property
     def n_tokens(self) -> int:
@@ -113,7 +131,8 @@ class KimiK3Media:
         # Raises for a vision_config that is not MoonViT-V2.
         self.config = MoonViTConfig.from_hf_config(hf_config)
         self.hidden = self.config.text_hidden_size
-        # <|media_pad|>: the chat template emits one per image, and expansion repeats it once per embedding.
+        # <|media_pad|>: the frontend renders the chat with one <|media_pad|> per image as its image_prompts, so each
+        # image arrives as this one token. expansion replaces it with the image's whole prompt.
         self.placeholder_token_ids = {"image": hf_config["media_placeholder_token_id"]}
         self._model: TT_MoonViT_Vision_Model | None = None
         self._trace: Trace | None = None
@@ -134,12 +153,37 @@ class KimiK3Media:
             )
         pixels = resize_image(Image.fromarray(media), self.config)
         fh, fw = (k * self.config.patch_size for k in self.config.merge_kernel_size)
-        return K3Image(pixels, pixels.shape[0] // fh, pixels.shape[1] // fw)
+        height, width = media.shape[:2]
+        return K3Image(pixels, pixels.shape[0] // fh, pixels.shape[1] // fw, width, height)
+
+    @cached_property
+    def tokenizer(self):
+        """Kimi-K3's tokenizer, from `tokenizer_source()`; loaded on first use, so only expansion needs it."""
+        from transformers import AutoTokenizer
+
+        source = tokenizer_source()
+        tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
+        pad = tokenizer.convert_tokens_to_ids("<|media_pad|>")
+        if pad != self.placeholder_token_ids["image"]:
+            raise ValueError(
+                f"the tokenizer of {source} maps <|media_pad|> to {pad}, config.json's media_placeholder_token_id is"
+                f" {self.placeholder_token_ids['image']}"
+            )
+        return tokenizer
 
     def expansion(self, item: K3Image) -> list[tuple[int, int]]:
-        """The run of placeholders that replaces the template's one <|media_pad|>. The tokens around it
-        (<|media_begin|>, the "image WxH" text, <|media_content|>, <|media_end|>) come from the chat template."""
-        return [(self.placeholder_token_ids["image"], item.n_tokens)]
+        """The tokens that replace the image's one <|media_pad|>: the prompt HF's processor gives the image
+        (`reference/kimi_k3_vision_processing.py:make_image_prompt`, with the size before the resize), tokenized by
+        Kimi's tokenizer, with its one <|media_pad|> repeated once per embedding, as the model widens it
+        (`_merge_input_ids_with_image_features`). Only the pads get embeddings."""
+        from models.experimental.kimi_k3_moonvit_v2.reference.kimi_k3_vision_processing import KimiK3VisionProcessor
+
+        pad = self.placeholder_token_ids["image"]
+        ids = self.tokenizer.encode(KimiK3VisionProcessor.make_image_prompt(item.width, item.height))
+        if ids.count(pad) != 1:
+            raise ValueError(f"the image prompt has {ids.count(pad)} <|media_pad|> tokens, not 1: {ids}")
+        at = ids.index(pad)
+        return [*((t, 1) for t in ids[:at]), (pad, item.n_tokens), *((t, 1) for t in ids[at + 1 :])]
 
     def stored_nbytes(self, item: K3Image) -> int:
         return media_format.stored_nbytes(item.n_tokens, self.hidden)
