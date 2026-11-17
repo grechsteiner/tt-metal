@@ -21,7 +21,7 @@ from PIL import Image
 from models.experimental.kimi_k3_moonvit_v2.reference.checkpoint import CHECKPOINT_ENV
 from models.experimental.kimi_k3_moonvit_v2.reference.kimi_k3_vision_processing import KimiK3VisionProcessor
 from models.experimental.kimi_k3_moonvit_v2.service import format as media_format
-from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media, tokenizer_source
+from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media, _stub_rows, tokenizer_source
 from models.experimental.kimi_k3_moonvit_v2.tests.common import MEDIA_CONFIG, MEDIA_PAD, random_array
 from models.experimental.kimi_k3_moonvit_v2.tt.image_prep import pixels_to_patches
 from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import check_output_rows
@@ -57,19 +57,11 @@ def test_prepare_matches_hf(processor, hw):
     assert media.stored_nbytes(item) == 16 + item.n_tokens * TEXT_HIDDEN * 2
 
 
-@pytest.fixture(scope="module")
-def tokenizer_media() -> KimiK3Media:
-    """A media module whose expansion can load Kimi-K3's tokenizer (from the Hugging Face repo, unless $KIMI_K3_HF_MODEL
-    names a local checkpoint folder)."""
-    pytest.importorskip("tiktoken")
-    return KimiK3Media(MEDIA_CONFIG)
-
-
-def test_expansion_matches_hf_prompt(tokenizer_media):
+def test_expansion_matches_hf_prompt():
     """The frontend renders the chat with one <|media_pad|> per image, and expansion replaces each: that must give
     the ids HF gets from the same chat with its processor's image prompts, each <|media_pad|> widened to the image's
     embeddings as the model does."""
-    media = tokenizer_media
+    media = KimiK3Media(MEDIA_CONFIG)
     tokenizer = media.tokenizer
     # (height, width): unresized, padded, resized by the side limit, and sizes whose digits cross 3-digit groups.
     items = [media.prepare("image", random_array(*hw)) for hw in [(1080, 1920), (20, 33), (300, 8000), (1, 1)]]
@@ -94,6 +86,15 @@ def test_tokenizer_source(monkeypatch):
     assert tokenizer_source() == "moonshotai/Kimi-K3"
     monkeypatch.setenv(CHECKPOINT_ENV, "/weights/Kimi-K3")
     assert tokenizer_source() == "/weights/Kimi-K3"
+
+
+def test_constructor_loads_the_tokenizer(expect_error):
+    """The constructor loads the tokenizer, once per process, and checks it against config.json's placeholder."""
+    media = KimiK3Media(MEDIA_CONFIG)
+    assert media.tokenizer is KimiK3Media(MEDIA_CONFIG).tokenizer
+    assert media.tokenizer.convert_tokens_to_ids("<|media_pad|>") == MEDIA_PAD
+    with expect_error(ValueError, "to 163605, config.json's media_placeholder_token_id is 163606"):
+        KimiK3Media({**MEDIA_CONFIG, "media_placeholder_token_id": MEDIA_PAD + 1})
 
 
 @pytest.mark.parametrize(
@@ -136,8 +137,9 @@ def test_image_pickles_out_of_band():
 
 
 def test_prepare_does_not_import_ttnn():
-    """prepare and stored_nbytes run where the service prepares images, which may have no ttnn (expansion too; it
-    imports only transformers and the tokenizer). A fresh interpreter, since this one has ttnn imported already."""
+    """The constructor, prepare and stored_nbytes run where the service prepares images, which may have no ttnn
+    (expansion too; the constructor imports only transformers and the tokenizer). A fresh interpreter, since this one
+    has ttnn imported already."""
     code = (
         "import sys, numpy as np\n"
         "from models.experimental.kimi_k3_moonvit_v2.service.media import KimiK3Media\n"
@@ -319,3 +321,35 @@ def test_stub_does_not_import_ttnn():
         "assert 'ttnn' not in sys.modules, 'ttnn imported'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, cwd=Path(__file__).parents[4])
+
+
+def test_encode_writes_every_item_of_a_call():
+    """An encode call of two images writes each slot in full, header and rows, as a call of that image alone does."""
+    media = stub_media()
+    items = [media.prepare("image", random_array(56, 84)), media.prepare("image", random_array(84, 140, seed=1))]
+    together = [memoryview(bytearray(b"\xff" * media.stored_nbytes(item))) for item in items]
+    media.encode(items, together)
+    for item, value in zip(items, together):
+        alone = memoryview(bytearray(b"\xff" * media.stored_nbytes(item)))
+        media.encode([item], [alone])
+        assert bytes(value) == bytes(alone)
+        assert bytes(value[:16]) == bytes(16)  # the header: kind 0 ("image"), then zero padding
+        assert np.array_equal(media_format.embeddings(value, TEXT_HIDDEN), _stub_rows(item, TEXT_HIDDEN))
+    media.close()
+
+
+def test_stub_encode_writes_a_value_prefill_reads():
+    """The prefill reads a stored value from the store, read-only, with format.Header.read and format.embeddings, and
+    expects one row per <|media_pad|> of the image's expansion (the media ref's num_tokens)."""
+    media = stub_media()
+    item = media.prepare("image", random_array(100, 60))
+    buf = memoryview(bytearray(media.stored_nbytes(item)))
+    media.encode([item], [buf])
+    media.close()
+
+    fetched = memoryview(bytes(buf))  # as the store hands it back
+    assert media_format.Header.read(fetched).kind == "image"
+    rows = media_format.embeddings(fetched, TEXT_HIDDEN)
+    (pads,) = [n for token, n in media.expansion(item) if token == MEDIA_PAD]
+    assert rows.shape == (pads, TEXT_HIDDEN) == (item.n_tokens, TEXT_HIDDEN)
+    assert np.array_equal(rows, _stub_rows(item, TEXT_HIDDEN))

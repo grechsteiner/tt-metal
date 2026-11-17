@@ -17,8 +17,8 @@ ttnn is imported only where the chips are used, in `device_params` and `load`: `
 `stored_nbytes` must also run in a process without ttnn. With the option `stub_embeddings`, `load` and `encode` write
 seeded stand-in embeddings and use no chip, so the service and the prefill side can be tested without a ring.
 
-`expansion` tokenizes each image's prompt with Kimi's own tokenizer (`tokenizer_source`; it needs `transformers` and
-`tiktoken`).
+The constructor loads Kimi's own tokenizer (`tokenizer_source`; it needs `transformers` and `tiktoken`), which
+`expansion` uses to tokenize each image's prompt. Each source is loaded once per process.
 
 The service must not call `load`, `encode` or `close` from several threads at once: they share the device inputs and
 the one captured trace.
@@ -26,12 +26,12 @@ the one captured trace.
 
 from __future__ import annotations
 
+import functools
 import gc
 import hashlib
 import os
 import traceback
 from dataclasses import dataclass
-from functools import cached_property
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -58,6 +58,14 @@ def tokenizer_source() -> str:
     $KIMI_K3_HF_MODEL names, which saves a download when the tokenizer ships with the weights, else MODEL_NAME (the
     files are then downloaded into the Hugging Face cache)."""
     return os.environ.get(CHECKPOINT_ENV) or MODEL_NAME
+
+
+@functools.cache
+def load_tokenizer(source: str):
+    """Kimi-K3's tokenizer from `source`, loaded once per process."""
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(source, trust_remote_code=True)
 
 
 @dataclass(frozen=True)
@@ -134,6 +142,15 @@ class KimiK3Media:
         # <|media_pad|>: the frontend renders the chat with one <|media_pad|> per image as its image_prompts, so each
         # image arrives as this one token. expansion replaces it with the image's whole prompt.
         self.placeholder_token_ids = {"image": hf_config["media_placeholder_token_id"]}
+        # Loaded here, not in load: the service also calls expansion in processes that never load the encoder.
+        source = tokenizer_source()
+        self.tokenizer = load_tokenizer(source)
+        pad = self.tokenizer.convert_tokens_to_ids("<|media_pad|>")
+        if pad != self.placeholder_token_ids["image"]:
+            raise ValueError(
+                f"the tokenizer of {source} maps <|media_pad|> to {pad}, config.json's media_placeholder_token_id is"
+                f" {self.placeholder_token_ids['image']}"
+            )
         self._model: TT_MoonViT_Vision_Model | None = None
         self._trace: Trace | None = None
         self._stub = False
@@ -155,21 +172,6 @@ class KimiK3Media:
         fh, fw = (k * self.config.patch_size for k in self.config.merge_kernel_size)
         height, width = media.shape[:2]
         return K3Image(pixels, pixels.shape[0] // fh, pixels.shape[1] // fw, width, height)
-
-    @cached_property
-    def tokenizer(self):
-        """Kimi-K3's tokenizer, from `tokenizer_source()`; loaded on first use, so only expansion needs it."""
-        from transformers import AutoTokenizer
-
-        source = tokenizer_source()
-        tokenizer = AutoTokenizer.from_pretrained(source, trust_remote_code=True)
-        pad = tokenizer.convert_tokens_to_ids("<|media_pad|>")
-        if pad != self.placeholder_token_ids["image"]:
-            raise ValueError(
-                f"the tokenizer of {source} maps <|media_pad|> to {pad}, config.json's media_placeholder_token_id is"
-                f" {self.placeholder_token_ids['image']}"
-            )
-        return tokenizer
 
     def expansion(self, item: K3Image) -> list[tuple[int, int]]:
         """The tokens that replace the image's one <|media_pad|>: the prompt HF's processor gives the image
@@ -222,6 +224,7 @@ class KimiK3Media:
         from models.experimental.kimi_k3_moonvit_v2.tt.trace import Trace
         from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import TT_MoonViT_Vision_Model
 
+        ccl = model = inputs = None
         try:
             ccl = TT_CCL(mesh_device, num_links=RING_NUM_LINKS, topology=ttnn.Topology.Ring)
             model = self._model = TT_MoonViT_Vision_Model(
@@ -236,6 +239,9 @@ class KimiK3Media:
             ttnn.deallocate(model(**inputs))
             self._trace = Trace(mesh_device, lambda: model(**inputs))
         except BaseException as error:
+            # This frame is still running, so _clear_frames cannot clear it: drop its device objects here. model is
+            # also a closure cell of the trace's forward.
+            ccl = model = inputs = None
             self.close()
             _clear_frames(error)  # the failed call's frames hold device tensors
             gc.collect()
