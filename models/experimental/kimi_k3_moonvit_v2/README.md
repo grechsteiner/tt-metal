@@ -140,8 +140,8 @@ Image sizes (`tests/common.py`):
 | `REAL_ROWS_FROM_EACH_CHIP_ASSERTED_GRIDS` | `*_real_rows_from_each_chip` attention and block tests | `full`, `max_side`, `partial` | fp32 on `SAMPLED_ROWS_PER_CHIP` rows of each chip, checked chip by chip |
 | `SIMULATOR_GRID` | `_small` tests | 6x20 in a config padded to 512 rows (128 per chip) | Every row |
 
-Full size (`test_full_size.py`, LoudBox, checkpoint only): a 256x256 image, 65,536 of the 67,584 rows,
-with real rows on every chip.
+Full size (`test_full_size.py`, LoudBox, checkpoint only): two images, each with real rows on every
+chip: 256x256 (65,536 of the 67,584 rows) and 510x132 (67,320 rows, the largest grid the processor makes).
 Each layer, the full encoder and the full model are compared against reference outputs saved once
 by `tests/goldens.py`. They are fp32 because the bf16 reference rounds more than the device in
 deeper layers. The tests skip until the outputs exist:
@@ -150,6 +150,7 @@ deeper layers. The tests skip until the outputs exist:
 export KIMI_K3_HF_MODEL=/path/to/Kimi-K3
 export MOONVIT_GOLDEN_DIR=/path/to/goldens
 python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens --grid 256x256   # resumable
+python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens --grid 510x132
 pytest models/experimental/kimi_k3_moonvit_v2/tests/test_full_size.py
 ```
 
