@@ -57,9 +57,8 @@ out = tt_model.run(pixel_values, grid_thws)  # (h*w, 3, 14, 14), [[1, h, w]] -> 
 Images must be RGB; other modes raise `ValueError`. Any image size is accepted. HF's resize keeps
 the image's whole patches to `in_patch_limit` (65,536), but it rounds them down and pads to 28 px
 afterwards, so the padded grid can be larger: at most 67,320 patches (510x132, from a 1889x7377
-image; checked over every size up to 100,000 px a side, and the side and patch limits keep larger
-images under it). `max_patches` is that rounded up to a multiple of 512 (4 chips x 2x2 merge x 32-row
-tiles): 67,584.
+image). `max_patches` is that rounded up to a multiple of 512 (4 chips x 2x2 merge x 32-row tiles):
+67,584.
 
 TODO (`tt/image_prep.py`):
 

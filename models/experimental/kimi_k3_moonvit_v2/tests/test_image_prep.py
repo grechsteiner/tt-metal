@@ -94,8 +94,7 @@ def test_resize_plan_matches_hf(config, media_proc_cfg):
 
 def test_max_patches_holds_the_largest_grid(config):
     """The default `max_patches` holds the largest grid HF makes for any image size, with the least
-    padding `resolve_parallel` allows. `MAX_PROCESSOR_PATCHES` is the maximum over every size up to
-    100,000 px a side; beyond that the side limit and the patch limit keep the grid smaller."""
+    padding `resolve_parallel` allows."""
     plan = image_prep.resize_plan(1889, 7377, config)
     assert plan.grid_h * plan.grid_w == MAX_PROCESSOR_PATCHES
     assert all(h * w <= MAX_PROCESSOR_PATCHES for h, w in KNOWN_GRIDS.values())
