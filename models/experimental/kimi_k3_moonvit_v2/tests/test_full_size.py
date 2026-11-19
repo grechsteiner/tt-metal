@@ -2,9 +2,9 @@
 
 # SPDX-License-Identifier: Apache-2.0
 
-"""Device, the 4-chip ring (one LoudBox row): full-size (256x256, all 65,536 padded rows real) encoder layers, each on
-its own, the full 27-layer encoder and the full model against reference outputs saved by `goldens.py`,
-real weights only.
+"""Device, the 4-chip ring (one LoudBox row): full-size (256x256, 65,536 of the 67,584 padded rows real) encoder
+layers, each on its own, the full 27-layer encoder and the full model against reference outputs saved by
+`goldens.py`, real weights only.
 
 The reference outputs are fp32 (`goldens.py`): the bf16 reference's own
 rounding is larger than the device's error in deeper layers. The CPU reference is slow at this
@@ -12,9 +12,9 @@ length, so it is not recomputed here: generate it once with
 `python -m models.experimental.kimi_k3_moonvit_v2.tests.goldens`.
 The tests skip when `$MOONVIT_GOLDEN_DIR` is unset, or the saved outputs or the checkpoint are missing.
 
-Every chip holds 16,384 real rows, so besides the PCC over the whole image each chip's quarter
-(in window order, as the device splits it) is checked on its own; a wrong chip cannot hide behind
-three right ones.
+Every chip holds real rows (16,896 on chips 0-2, 14,848 on chip 3), so besides the PCC over the whole
+image each chip's real rows (in window order, as the device splits it) are checked on their own; a
+wrong chip cannot hide behind three right ones.
 
 The `_trace` variants are the traced perf tests: they capture the same forward in a trace, check its
 first replay (it must equal the untraced run exactly and pass the same checks), then time back-to-back
@@ -98,17 +98,18 @@ def check_quality(
     label: str,
     merged: bool = False,
 ) -> None:
-    """`quality` over every row, then over each chip's quarter. Both in raster order; the quarters are
-    taken in window order, the order the rows are split across the ring. `merged`: one row per 2x2
-    window (merger and projector outputs), already in the order the ring splits them."""
+    """`quality` over every row, then over each chip's real rows. Both in raster order; each chip's rows
+    are taken in window order, the order the rows are split across the ring, at the chip's share of
+    `max_patches`. `merged`: one row per 2x2 window (merger and projector outputs), already in the order
+    the ring splits them."""
     parts = [("all", golden, actual)]
     if merged:
         golden_w, actual_w = golden, actual
     else:
         golden_w, actual_w = (host_prep.to_window_order(t, H, W, config.merge_kernel_size) for t in (golden, actual))
-    rows = golden_w.shape[0] // sp_factor
+    rows = config.max_patches // (config.merge_area if merged else 1) // sp_factor
     for chip in range(sp_factor):
-        part = slice(chip * rows, (chip + 1) * rows)
+        part = slice(chip * rows, min((chip + 1) * rows, golden_w.shape[0]))
         parts.append((f"chip {chip}", golden_w[part], actual_w[part]))
     assert_quality_parts(parts, pcc, relative_rmse, label)
 
