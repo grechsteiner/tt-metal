@@ -103,13 +103,15 @@ def close_ring(parent, ring):
     ttnn.set_fabric_config(ttnn.FabricConfig.DISABLED)
 
 
-def build_tt_model(mesh, config, reference):
+def build_tt_model(mesh, config, reference, precision="baseline"):
     import ttnn
     from models.experimental.kimi_k3_moonvit_v2.tt.ccl import ParallelFactor, TT_CCL
     from models.experimental.kimi_k3_moonvit_v2.tt.vision_model import TT_MoonViT_Vision_Model
 
     ccl = TT_CCL(mesh, num_links=2, topology=ttnn.Topology.Ring)
-    tt = TT_MoonViT_Vision_Model(config, mesh_device=mesh, sequence_parallel=ParallelFactor(4, 1), ccl=ccl)
+    tt = TT_MoonViT_Vision_Model(
+        config, mesh_device=mesh, sequence_parallel=ParallelFactor(4, 1), ccl=ccl, precision=precision
+    )
     tt.load_torch_state_dict(reference.state_dict())
     return tt
 
@@ -132,7 +134,14 @@ def main() -> int:
     ap.add_argument("--cpu-only", action="store_true")
     ap.add_argument("--no-reference", action="store_true")
     ap.add_argument("--only", default="")
+    ap.add_argument(
+        "--precision", default="baseline", choices=["baseline", "safe", "balanced", "fast"], help="model_config.PRECISIONS"
+    )
+    ap.add_argument("--shard", default="0/1", help="I/N: encode every N-th image (sorted), starting at I, to split over hosts")
+    ap.add_argument("--resume", action="store_true", help="skip images whose embedding already exists in --out")
     args = ap.parse_args()
+    shard_i, shard_n = (int(x) for x in args.shard.split("/"))
+    assert 0 <= shard_i < shard_n, args.shard
 
     path = checkpoint_path()
     if path is None:
@@ -143,6 +152,7 @@ def main() -> int:
     images = sorted(p for d in args.images for p in d.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
     if args.only:
         images = [p for p in images if p.name.startswith(tuple(args.only.split(",")))]
+    images = images[shard_i::shard_n]
     (args.out / "embeddings").mkdir(parents=True, exist_ok=True)
 
     reference = build_reference(REAL_MARK)
@@ -150,14 +160,18 @@ def main() -> int:
     if not args.cpu_only:
         parent, ring = open_ring()
         t0 = time.perf_counter()
-        tt = build_tt_model(ring, config, reference)
+        tt = build_tt_model(ring, config, reference, args.precision)
         logger.info(f"TT model built in {time.perf_counter() - t0:.0f} s")
     fp32_reference = to_fp32(reference)
 
     results = []
-    results_path = args.out / ("results_cpu.json" if args.cpu_only else "results.json")
+    suffix = "" if shard_n == 1 else f".shard{shard_i}of{shard_n}"
+    results_path = args.out / (f"results_cpu{suffix}.json" if args.cpu_only else f"results{suffix}.json")
+    logger.info(f"precision {args.precision}, shard {args.shard}: {len(images)} images")
     try:
         for img_path in images:
+            if args.resume and (args.out / "embeddings" / f"{img_path.stem}.pt").exists():
+                continue
             image = load_image(img_path)
             r = {"image": img_path.name, "mode": image.mode, "size": list(image.size)}
             results.append(r)

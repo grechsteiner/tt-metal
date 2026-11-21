@@ -28,7 +28,15 @@ import ttnn
 from .ccl import ParallelFactor, TT_CCL, ccl_slot_for_layer
 from .device_input import DeviceInput
 from .host_prep import prepare_host_inputs
-from .model_config import MoonViTConfig, VisionParallel, check_grid, compute_kernel_config, resolve_parallel
+from .model_config import (
+    MoonViTConfig,
+    Precision,
+    VisionParallel,
+    check_grid,
+    compute_kernel_config,
+    precision_by_name,
+    resolve_parallel,
+)
 from .module import Module, ModuleList
 from .patch_embed import TT_Patch_Embed
 from .patch_merger import TT_Patch_Merger
@@ -58,7 +66,13 @@ def check_output_rows(rows: np.ndarray) -> None:
 
 class TT_MoonViT_Encoder(Module):
     def __init__(
-        self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, parallel: VisionParallel, compute_kernel_config
+        self,
+        config: MoonViTConfig,
+        *,
+        mesh_device: ttnn.MeshDevice,
+        parallel: VisionParallel,
+        compute_kernel_config,
+        precision: Precision | None = None,
     ) -> None:
         super().__init__()
         n = config.num_hidden_layers
@@ -68,6 +82,7 @@ class TT_MoonViT_Encoder(Module):
                 mesh_device=mesh_device,
                 parallel=parallel,
                 compute_kernel_config=compute_kernel_config,
+                precision=precision,
                 ccl_slot=ccl_slot_for_layer(layer, n),
             )
             for layer in range(n)
@@ -99,12 +114,22 @@ class TT_MoonViT_Encoder(Module):
 
 class TT_MoonViT_Vision_Tower(Module):
     def __init__(
-        self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, parallel: VisionParallel, compute_kernel_config
+        self,
+        config: MoonViTConfig,
+        *,
+        mesh_device: ttnn.MeshDevice,
+        parallel: VisionParallel,
+        compute_kernel_config,
+        precision: Precision | None = None,
     ) -> None:
         super().__init__()
         self.patch_embed = TT_Patch_Embed(config, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
         self.encoder = TT_MoonViT_Encoder(
-            config, mesh_device=mesh_device, parallel=parallel, compute_kernel_config=compute_kernel_config
+            config,
+            mesh_device=mesh_device,
+            parallel=parallel,
+            compute_kernel_config=compute_kernel_config,
+            precision=precision,
         )
         self.merger = TT_Patch_Merger(config)
 
@@ -127,7 +152,9 @@ class TT_MoonViT_Vision_Model(Module):
         mesh_device: ttnn.MeshDevice,
         sequence_parallel: ParallelFactor | None = None,
         ccl: TT_CCL | None = None,
+        precision: str = "baseline",
     ) -> None:
+        """`precision` names a `model_config.PRECISIONS` entry; "baseline" is HiFi4 everywhere."""
         super().__init__()
         self.config = config
         self.mesh_device = mesh_device
@@ -135,7 +162,11 @@ class TT_MoonViT_Vision_Model(Module):
         ckc = compute_kernel_config(mesh_device)
         self.rope = TT_Rope(config, mesh_device=mesh_device, parallel=self.parallel)
         self.vision_tower = TT_MoonViT_Vision_Tower(
-            config, mesh_device=mesh_device, parallel=self.parallel, compute_kernel_config=ckc
+            config,
+            mesh_device=mesh_device,
+            parallel=self.parallel,
+            compute_kernel_config=ckc,
+            precision=None if precision == "baseline" else precision_by_name(precision),
         )
         self.mm_projector = TT_Projector(config, mesh_device=mesh_device, compute_kernel_config=ckc)
         sp_axis = self.parallel.sp_axis

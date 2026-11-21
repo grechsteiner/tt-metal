@@ -210,6 +210,54 @@ def resolve_parallel(
     return VisionParallel(sp_axis=sp.mesh_axis, sp_factor=sp.factor, ccl=ccl)
 
 
+@dataclass(frozen=True)
+class Precision:
+    """Compute settings that differ between the precision options. Everything else keeps the baseline: fp32
+    accumulation everywhere, bf16 weights and activations, the fp32 residual stream, and HiFi4 for the
+    norms, patch embed and projector. `sdpa_*` is the ring attention op; `linear_*` is wqkv, wo, fc0 and fc1."""
+
+    sdpa_fidelity: str = "HiFi4"
+    sdpa_exp_approx: bool = False
+    linear_fidelity: str = "HiFi4"
+    linear_l1_acc: bool = False
+
+
+# The precision sweep's options: baseline, 1. safe (`lin=3l,sdpa=2`), 2. balanced (`lin=3l,sdpa=3,ea=1`) and
+# 3. fast (`lin=3l,sdpa=2,ea=1`).
+PRECISIONS = {
+    "baseline": Precision(),
+    "safe": Precision(sdpa_fidelity="HiFi2", linear_fidelity="HiFi3", linear_l1_acc=True),
+    "balanced": Precision(sdpa_fidelity="HiFi3", sdpa_exp_approx=True, linear_fidelity="HiFi3", linear_l1_acc=True),
+    "fast": Precision(sdpa_fidelity="HiFi2", sdpa_exp_approx=True, linear_fidelity="HiFi3", linear_l1_acc=True),
+}
+
+
+def precision_by_name(name: str) -> Precision:
+    if name not in PRECISIONS:
+        raise ValueError(f"unknown precision {name!r}; choose from {sorted(PRECISIONS)}")
+    return PRECISIONS[name]
+
+
+def _kernel_config(mesh_device: ttnn.MeshDevice, fidelity: str, *, l1_acc: bool = False):
+    import ttnn
+
+    return ttnn.init_device_compute_kernel_config(
+        mesh_device.arch(),
+        math_fidelity=getattr(ttnn.MathFidelity, fidelity),
+        math_approx_mode=False,
+        fp32_dest_acc_en=True,
+        packer_l1_acc=l1_acc,
+    )
+
+
+def sdpa_kernel_config(mesh_device: ttnn.MeshDevice, precision: Precision):
+    return _kernel_config(mesh_device, precision.sdpa_fidelity)
+
+
+def linear_kernel_config(mesh_device: ttnn.MeshDevice, precision: Precision):
+    return _kernel_config(mesh_device, precision.linear_fidelity, l1_acc=precision.linear_l1_acc)
+
+
 def compute_kernel_config(mesh_device: ttnn.MeshDevice):
     """HiFi4 with fp32 accumulation for every matmul: highest fidelity, no quantization."""
     import ttnn

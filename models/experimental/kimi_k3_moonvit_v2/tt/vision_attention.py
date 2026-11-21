@@ -40,9 +40,12 @@ class TT_Vision_Attention(Module):
         mesh_device: ttnn.MeshDevice,
         parallel: VisionParallel,
         compute_kernel_config,
+        sdpa_kernel_config=None,
+        sdpa_exp_approx: bool = False,
         ccl_slot: int = 0,
     ) -> None:
-        """`ccl_slot` picks the ring attention semaphores and K/V gather buffers (`ccl.ccl_slot_for_layer`)."""
+        """`compute_kernel_config` is for wqkv and wo; `sdpa_kernel_config` (default: the same) is for the ring
+        attention op, with `sdpa_exp_approx` its approximate exp. `ccl_slot` picks the ring attention semaphores and K/V gather buffers (`ccl.ccl_slot_for_layer`)."""
         super().__init__()
         self.config = config
         self.mesh_device = mesh_device
@@ -53,7 +56,8 @@ class TT_Vision_Attention(Module):
         self.wqkv = Linear(config.hidden_size, 3 * config.qkv_hidden_size, **kwargs)
         # fp32 out: added to the fp32 residual stream (vision_block.py).
         self.wo = Linear(config.qkv_hidden_size, config.hidden_size, output_dtype=ttnn.float32, **kwargs)
-        self.compute_kernel_config = compute_kernel_config
+        self.compute_kernel_config = compute_kernel_config if sdpa_kernel_config is None else sdpa_kernel_config
+        self.sdpa_exp_approx = sdpa_exp_approx
         # Built on the first forward: they read the device's core grid, and construction stays
         # device-free (test_module.py builds the tree on a stand-in device).
         self._program_config: ttnn.SDPAProgramConfig | None = None
@@ -69,7 +73,7 @@ class TT_Vision_Attention(Module):
                 compute_with_storage_grid_size=(grid.x - 1, grid.y),
                 q_chunk_size=Q_CHUNK_SIZE,
                 k_chunk_size=K_CHUNK_SIZE,
-                exp_approx_mode=False,
+                exp_approx_mode=self.sdpa_exp_approx,
             )
         return self._program_config, self._ccl_core_grid_offset
 

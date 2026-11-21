@@ -19,7 +19,7 @@ import torch
 
 import ttnn
 
-from .model_config import MoonViTConfig, VisionParallel
+from .model_config import MoonViTConfig, Precision, VisionParallel, linear_kernel_config, sdpa_kernel_config
 from .module import Module, rename_substate
 from .rms_norm import RMSNorm
 from .rope import RopeTensors
@@ -35,10 +35,17 @@ class TT_Vision_Block(Module):
         mesh_device: ttnn.MeshDevice,
         parallel: VisionParallel,
         compute_kernel_config,
+        precision: Precision | None = None,
         ccl_slot: int = 0,
     ) -> None:
-        """`ccl_slot`: see `TT_Vision_Attention`."""
+        """`compute_kernel_config` is for the norms. With a `precision`, the attention op and the four linears
+        get their own configs (`model_config.PRECISIONS`); without one they share it. `ccl_slot`: see
+        `TT_Vision_Attention`."""
         super().__init__()
+        linear_ckc, sdpa_ckc, exp_approx = compute_kernel_config, None, False
+        if precision is not None:
+            linear_ckc = linear_kernel_config(mesh_device, precision)
+            sdpa_ckc, exp_approx = sdpa_kernel_config(mesh_device, precision), precision.sdpa_exp_approx
         norm_kwargs = dict(
             eps=config.norm_eps,
             mesh_device=mesh_device,
@@ -51,10 +58,12 @@ class TT_Vision_Block(Module):
             config,
             mesh_device=mesh_device,
             parallel=parallel,
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=linear_ckc,
+            sdpa_kernel_config=sdpa_ckc,
+            sdpa_exp_approx=exp_approx,
             ccl_slot=ccl_slot,
         )
-        self.mlp = TT_Vision_MLP(config, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
+        self.mlp = TT_Vision_MLP(config, mesh_device=mesh_device, compute_kernel_config=linear_ckc)
 
     def _prepare_torch_state(self, state: dict[str, torch.Tensor]) -> None:
         rename_substate(state, "wqkv", "attention.wqkv")
