@@ -86,12 +86,19 @@ def compare_out(golden: torch.Tensor, actual: torch.Tensor) -> dict:
 
 
 def open_ring():
+    """Row 0 of the system mesh as a (1, 4) ring. Every chip of the system mesh (LoudBox 2x4, Galaxy 8x4) is
+    opened, as in tests/conftest.py: fabric setup waits for every ethernet link, including those to the
+    other rows."""
     import ttnn
-    from tests.scripts.common import get_updated_device_params
+    from tt_py_test_utils_common.device_params import get_updated_device_params
+    from models.experimental.kimi_k3_moonvit_v2.tt.ccl import RING_FABRIC_CONFIG
 
-    ttnn.set_fabric_config(ttnn.FabricConfig.FABRIC_2D_TORUS_X, ttnn.FabricReliabilityMode.STRICT_INIT)
-    parent = ttnn.open_mesh_device(mesh_shape=ttnn.MeshShape(2, 4), **get_updated_device_params({}))
+    system_shape = tuple(ttnn._ttnn.multi_device.SystemMeshDescriptor().shape())
+    assert len(system_shape) == 2 and system_shape[1] == 4, f"need a system mesh 4 wide, got {system_shape}"
+    ttnn.set_fabric_config(RING_FABRIC_CONFIG, ttnn.FabricReliabilityMode.STRICT_INIT)
+    parent = ttnn.open_mesh_device(mesh_shape=ttnn.MeshShape(*system_shape), **get_updated_device_params({}))
     ring = parent.create_submesh(ttnn.MeshShape(1, 4), ttnn.MeshCoordinate(0, 0))
+    logger.info(f"system mesh {system_shape}, ring = row 0")
     return parent, ring
 
 
