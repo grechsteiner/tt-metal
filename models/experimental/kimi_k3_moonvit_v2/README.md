@@ -54,20 +54,13 @@ pixel_values, grid_thws = image_to_patches(Image.open(path), config)  # tt/image
 out = tt_model.run(pixel_values, grid_thws)  # (h*w, 3, 14, 14), [[1, h, w]] -> (h*w/4, 7168)
 ```
 
-Images must be RGB; other modes raise `ValueError`. Any image size is accepted. HF's resize keeps
-the image's whole patches to `in_patch_limit` (65,536), but it rounds them down and pads to 28 px
-afterwards, so the padded grid can be larger: at most 67,320 patches (510x132, from a 1889x7377
-image). `max_patches` is that rounded up to a multiple of 512 (4 chips x 2x2 merge x 32-row tiles):
-67,584.
-
-TODO (`tt/image_prep.py`):
-
-- Support non-RGB modes as HF does: convert to RGB *after* the resize (Pillow resizes P and 1 with
-  nearest neighbour and RGBA with premultiplied alpha, so converting first does not match HF). Test
-  against `reference/kimi_k3_vision_processing.py` for RGBA, LA, PA, L, P, 1, CMYK and I;16.
-- Support `transparent_bg_config` and `transparent_bg_fill_stage` (`reference/preprocessor_config.json`):
-  composite images with alpha (RGBA, LA, PA, and P or L with `tRNS`) onto HF's chessboard after the
-  resize and before the black pad, with the values read from the config.
+Pass the image in its own mode; don't convert it to RGB first. As in HF, any mode is converted after
+the resize, and an image with alpha (RGBA, LA, PA, or P or L with `tRNS`) is composited there onto
+HF's chessboard (8 px squares, white 255 and gray 180, from `reference/preprocessor_config.json`)
+before the black pad. Any image size is accepted. HF's resize keeps the image's whole patches to
+`in_patch_limit` (65,536), but it rounds them down and pads to 28 px afterwards, so the padded grid
+can be larger: at most 67,320 patches (510x132, from a 1889x7377 image). `max_patches` is that
+rounded up to a multiple of 512 (4 chips x 2x2 merge x 32-row tiles): 67,584.
 
 ## Weights
 
