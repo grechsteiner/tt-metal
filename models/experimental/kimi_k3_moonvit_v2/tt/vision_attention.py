@@ -14,9 +14,11 @@ into the kernel and its program cache key, so every image size would build new p
 not replay one trace. The tensor is read on device each call.
 
 The ring attention runs on all but the last column of the worker grid; the last column runs the
-K/V all-gather that feeds it (`ccl_core_grid_offset`, column-major CCL cores). Q and K chunks of 256
-rows divide every chip's share of the padded sequence. With fp32 accumulation, K chunks of 512 need
-more L1 for circular buffers than a Blackhole core has.
+K/V all-gather that feeds it (`ccl_core_grid_offset`, column-major CCL cores). Q chunks of 192 rows
+and K chunks of 512, picked by sweeping both on a LoudBox ring at production shapes, with real patch
+counts from 1,024 to 67,320. Both divide every chip's share of the padded sequence. With fp32
+accumulation, K chunks of 512 fit a Blackhole core's L1 only with Q chunks of at most 192 rows, and K
+chunks of 1024 do not fit with any Q chunk size swept.
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ from .model_config import WO_BLOCKS, WQKV_BLOCKS, MoonViTConfig, VisionParallel,
 from .module import Module
 from .rope import RopeTensors
 
-Q_CHUNK_SIZE = 256
-K_CHUNK_SIZE = 256
+Q_CHUNK_SIZE = 192
+K_CHUNK_SIZE = 512
 
 
 class TT_Vision_Attention(Module):
