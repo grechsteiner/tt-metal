@@ -24,7 +24,7 @@ import torch.nn.functional as F
 import ttnn
 
 from .linear import Linear
-from .model_config import MoonViTConfig
+from .model_config import PATCH_EMBED_BLOCKS, MoonViTConfig
 from .module import LoadingError, Module
 
 
@@ -40,6 +40,7 @@ class TT_Patch_Embed(Module):
             compute_kernel_config=compute_kernel_config,
             # fp32 out: the start of the encoder's fp32 residual stream (vision_block.py).
             output_dtype=ttnn.float32,
+            blocks=PATCH_EMBED_BLOCKS,
         )
         self.pos_emb_weight: torch.Tensor | None = None
 

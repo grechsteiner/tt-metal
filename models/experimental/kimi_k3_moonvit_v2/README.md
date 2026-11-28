@@ -12,6 +12,9 @@ sequence parallel. Weights are bf16 and replicated. Activations are currently bf
 residual stream, which is fp32 (`tt/vision_block.py`). All matmuls accumulate in fp32. The encoder's
 linears (wqkv, wo, fc0, fc1) are HiFi3 with packer L1 accumulation, and ring attention is HiFi3 with
 the approximate exp (`tt/model_config.py`); the norms, patch embed and projector are HiFi4.
+The linears run `ttnn.experimental.minimal_matmul`, except patch embed, which runs `ttnn.linear`
+with a 2D program config; input, weight and output are DRAM interleaved (`tt/linear.py`), with
+per-layer block sizes in `tt/model_config.py`.
 
 ## Structure
 

@@ -210,6 +210,47 @@ def resolve_parallel(
     return VisionParallel(sp_axis=sp.mesh_axis, sp_factor=sp.factor, ccl=ccl)
 
 
+class MatmulBlocks(NamedTuple):
+    """Block and subblock sizes, in tiles, of a `Linear`'s `ttnn.experimental.minimal_matmul`."""
+
+    m: int
+    k: int
+    n: int
+    subblock_h: int
+    subblock_w: int
+
+
+class Matmul2DBlocks(NamedTuple):
+    """A `Linear`'s `ttnn.linear` with a 2D multicast program config
+    (`MatmulMultiCoreReuseMultiCastProgramConfig`), sizes in tiles. Rows are split over the grid's
+    `grid_y` rows and output columns over its `grid_x` columns; `Linear` derives the per-core
+    block from the input's row count."""
+
+    grid_x: int
+    grid_y: int
+    in0_block_w: int
+    subblock_h: int
+    subblock_w: int
+    out_block_h: int
+    out_block_w: int
+
+
+# Picked by sweeping block sizes on one Blackhole chip (12x10 worker grid) at each layer's
+# production shape: one ring chip's share of `RING_MAX_PATCHES` rows (a quarter of that for the
+# projector), with each layer's kernel config. Subblocks hold at most 4 tiles: fp32 accumulation
+# halves the destination register. Patch embed uses `ttnn.linear` with a 2D program config, which
+# was faster than `minimal_matmul` in that sweep.
+PATCH_EMBED_BLOCKS = Matmul2DBlocks(
+    grid_x=12, grid_y=8, in0_block_w=19, subblock_h=1, subblock_w=3, out_block_h=11, out_block_w=3
+)
+WQKV_BLOCKS = MatmulBlocks(m=16, k=2, n=8, subblock_h=4, subblock_w=1)
+WO_BLOCKS = MatmulBlocks(m=12, k=8, n=4, subblock_h=1, subblock_w=4)
+MLP_FC0_BLOCKS = MatmulBlocks(m=16, k=8, n=4, subblock_h=4, subblock_w=1)
+MLP_FC1_BLOCKS = MatmulBlocks(m=4, k=8, n=4, subblock_h=4, subblock_w=1)
+PROJECTOR_FC0_BLOCKS = MatmulBlocks(m=4, k=8, n=8, subblock_h=4, subblock_w=1)
+PROJECTOR_FC1_BLOCKS = MatmulBlocks(m=4, k=8, n=4, subblock_h=4, subblock_w=1)
+
+
 def _kernel_config(mesh_device: ttnn.MeshDevice, fidelity: ttnn.MathFidelity, *, packer_l1_acc: bool = False):
     import ttnn
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 import ttnn
 
 from .linear import Linear
-from .model_config import MoonViTConfig, VisionParallel, sdpa_kernel_config
+from .model_config import WO_BLOCKS, WQKV_BLOCKS, MoonViTConfig, VisionParallel, sdpa_kernel_config
 from .module import Module
 from .rope import RopeTensors
 
@@ -51,9 +51,11 @@ class TT_Vision_Attention(Module):
         self.ccl_slot = ccl_slot
         self.scale = config.head_dim**-0.5
         kwargs = dict(bias=config.attn_bias, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
-        self.wqkv = Linear(config.hidden_size, 3 * config.qkv_hidden_size, **kwargs)
+        self.wqkv = Linear(config.hidden_size, 3 * config.qkv_hidden_size, blocks=WQKV_BLOCKS, **kwargs)
         # fp32 out: added to the fp32 residual stream (vision_block.py).
-        self.wo = Linear(config.qkv_hidden_size, config.hidden_size, output_dtype=ttnn.float32, **kwargs)
+        self.wo = Linear(
+            config.qkv_hidden_size, config.hidden_size, output_dtype=ttnn.float32, blocks=WO_BLOCKS, **kwargs
+        )
         # Built on the first forward: they read the device, and construction stays device-free
         # (test_module.py builds the tree on a stand-in device).
         self._sdpa_compute_kernel_config = None

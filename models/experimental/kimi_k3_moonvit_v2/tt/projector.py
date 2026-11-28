@@ -5,8 +5,8 @@
 """Projector: `PatchMergerMLPV2` in the reference. fc0 -> exact GELU -> fc1 -> RMSNorm, no biases.
 
 Maps a merged token (4096) to the language model's width (7168). The GELU is the exact erf GELU
-(`nn.GELU()`), applied by fc0's `ttnn.linear` as `activation="gelu"` (`UnaryOpType.GELU`, not the
-fast approximation). The checkpoint names the linears `proj.0` and `proj.2`
+(`nn.GELU()`), applied after fc0's matmul as `activation_fn="gelu"` (`UnaryOpType.GELU`, not
+the fast approximation). The checkpoint names the linears `proj.0` and `proj.2`
 (`nn.Sequential` indices); `_prepare_torch_state` moves them to `fc0` and `fc1`. Sequence parallel:
 each device works on its own rows and no collectives are needed.
 """
@@ -18,7 +18,7 @@ import torch
 import ttnn
 
 from .linear import Linear
-from .model_config import MoonViTConfig
+from .model_config import PROJECTOR_FC0_BLOCKS, PROJECTOR_FC1_BLOCKS, MoonViTConfig
 from .module import Module, rename_substate
 from .rms_norm import RMSNorm
 
@@ -27,8 +27,10 @@ class TT_Projector(Module):
     def __init__(self, config: MoonViTConfig, *, mesh_device: ttnn.MeshDevice, compute_kernel_config) -> None:
         super().__init__()
         kwargs = dict(bias=False, mesh_device=mesh_device, compute_kernel_config=compute_kernel_config)
-        self.fc0 = Linear(config.merged_dim, config.merged_dim, activation_fn="gelu", **kwargs)
-        self.fc1 = Linear(config.merged_dim, config.text_hidden_size, **kwargs)
+        self.fc0 = Linear(
+            config.merged_dim, config.merged_dim, activation_fn="gelu", blocks=PROJECTOR_FC0_BLOCKS, **kwargs
+        )
+        self.fc1 = Linear(config.merged_dim, config.text_hidden_size, blocks=PROJECTOR_FC1_BLOCKS, **kwargs)
         self.post_norm = RMSNorm(
             config.text_hidden_size,
             eps=config.projector_norm_eps,
